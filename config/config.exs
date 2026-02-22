@@ -31,6 +31,21 @@ config :cerno, :decay,
   stale_days_decay: 90,
   stale_days_prune: 180
 
+# Promotion criteria (Reconciler → Organiser threshold)
+config :cerno, :promotion,
+  min_confidence: 0.7,
+  min_observations: 3,
+  min_age_days: 7
+
+# Resolution settings
+config :cerno, :resolution,
+  semantic_weight: 0.5,
+  rank_weight: 0.3,
+  domain_weight: 0.2,
+  min_hybrid_score: 0.3,
+  max_principles: 20,
+  already_represented_threshold: 0.85
+
 # Phoenix PubSub
 config :cerno, Cerno.PubSub,
   adapter: Phoenix.PubSub.PG2
