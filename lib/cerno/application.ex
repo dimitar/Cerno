@@ -8,7 +8,9 @@ defmodule Cerno.Application do
       ├── {Phoenix.PubSub, name: Cerno.PubSub}
       ├── Cerno.Embedding.Pool
       ├── Cerno.Embedding.Cache
-      ├── Cerno.Watcher.Supervisor
+      ├── Cerno.Watcher.Registry
+      ├── Cerno.Watcher.Supervisor (DynamicSupervisor)
+      │     └── Cerno.Watcher.FileWatcher (per project)
       ├── Cerno.Process.TaskSupervisor
       ├── Cerno.Process.Accumulator
       ├── Cerno.Process.Reconciler
@@ -32,6 +34,7 @@ defmodule Cerno.Application do
       Cerno.Embedding.Cache,
 
       # File watching
+      {Registry, keys: :unique, name: Cerno.Watcher.Registry},
       {DynamicSupervisor, name: Cerno.Watcher.Supervisor, strategy: :one_for_one},
 
       # Task supervisor for async work within processes

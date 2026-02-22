@@ -5,6 +5,7 @@ config :cerno, Cerno.Repo,
   password: "super",
   hostname: "localhost",
   database: "cerno_test#{System.get_env("MIX_TEST_PARTITION")}",
+  types: Cerno.PostgrexTypes,
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: 10
 

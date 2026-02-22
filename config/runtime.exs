@@ -10,6 +10,7 @@ if config_env() == :prod do
 
   config :cerno, Cerno.Repo,
     url: database_url,
+    types: Cerno.PostgrexTypes,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10")
 
   config :cerno, Cerno.API.Endpoint,

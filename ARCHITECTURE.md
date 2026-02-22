@@ -46,11 +46,12 @@ Fragment
 
 ```
 Cerno.Atomic.Parser (behaviour + dispatcher)
-├── parse/1           route file to correct parser by filename
-├── parse_directory/1 scan dir for all recognised file patterns
-├── find_parser/1     look up parser module for a filename
-├── file_pattern/0    callback — glob pattern this parser handles
-└── hash_file/1       SHA-256 utility
+├── parse/1              route file to correct parser by filename
+├── parse_directory/1    scan dir for all recognised file patterns
+├── find_parser/1        look up parser module for a filename
+├── registered_patterns/0  list all file patterns from registered parsers
+├── file_pattern/0       callback — glob pattern this parser handles
+└── hash_file/1          SHA-256 utility
 
 Cerno.Atomic.Parser.ClaudeMd     CLAUDE.md → Fragments (split by H2 headings)
 (future) Parser.CursorRules      .cursorrules → Fragments
@@ -87,6 +88,11 @@ Insight (Postgres: insights)
 └── ── many_to_many ──▶ Cluster      semantic groupings
 ```
 
+**Query methods on `Insight`:**
+- `find_similar/2` — pgvector cosine similarity search (`1 - (a <=> b)`), configurable threshold/limit/status filter
+- `find_contradictions/2` — finds insights in the contradiction similarity range (default 0.5–0.85)
+- `hash_content/1` — SHA-256 for exact dedup
+
 **Supporting types:**
 
 | Type | Table | Purpose |
@@ -94,15 +100,17 @@ Insight (Postgres: insights)
 | `InsightSource` | `insight_sources` | Links insight → original file, project, line range, fragment ID. Unique on `fragment_id` to prevent reprocessing. |
 | `Contradiction` | `contradictions` | Pair of conflicting insights with type (direct/partial/contextual), resolution lifecycle (unresolved → resolved/dismissed), and similarity score. Unique pair constraint via `LEAST/GREATEST`. |
 | `Cluster` | `clusters` | Semantic grouping with centroid embedding and coherence score. Many-to-many with insights via `cluster_insights`. |
+| `Classifier` | — | Heuristic keyword-based classifier. Determines category, tags, and domain from fragment content without LLM calls. |
 
 **Modules:**
 
 | Module | Purpose | Status |
 |--------|---------|--------|
-| `Cerno.ShortTerm.Insight` | Ecto schema, changeset, `hash_content/1` | Complete |
+| `Cerno.ShortTerm.Insight` | Ecto schema, changeset, `hash_content/1`, `find_similar/2`, `find_contradictions/2` | Complete |
 | `Cerno.ShortTerm.InsightSource` | Ecto schema, changeset | Complete |
 | `Cerno.ShortTerm.Contradiction` | Ecto schema, changeset | Complete |
 | `Cerno.ShortTerm.Cluster` | Ecto schema, changeset | Complete |
+| `Cerno.ShortTerm.Classifier` | Heuristic category/tag/domain classification | Complete |
 
 ### 3. Long-Term Memory — `Cerno.LongTerm`
 
@@ -155,24 +163,22 @@ resolution:requested ──▶ Resolver ◀────────────�
 
 ### Accumulator — `Cerno.Process.Accumulator`
 
-Drives the upward flow from files to short-term memory.
+Drives the upward flow from files to short-term memory. Full pipeline implemented.
 
 **Current implementation:**
 1. Receive path (via PubSub `file:changed`, CLI `scan`, or `scan_all`)
 2. Skip if already processing that path (MapSet-based lock)
-3. Parse `CLAUDE.md` → Fragments via `Cerno.Atomic.Parser`
-4. For each fragment, compute `content_hash`:
-   - **Exact match found** → increment `observation_count`, update `last_seen_at`, add `InsightSource`
-   - **No match** → create new `Insight` with default confidence 0.5, add `InsightSource`
-5. Broadcast `accumulation:complete` on PubSub
-
-**Not yet implemented:**
-- Semantic dedup (embedding similarity > 0.92 threshold)
-- Embedding generation and persistence on Insight records
-- Category/tag/domain classification
-- Contradiction detection during ingestion
-- File hash comparison to skip unchanged files
-- Accumulation run audit logging
+3. Compare file hash against `WatchedProject.file_hash` — skip unchanged files
+4. Parse via pluggable `Cerno.Atomic.Parser` → Fragments
+5. For each fragment:
+   - **Exact dedup:** `content_hash` match → increment `observation_count`, update `last_seen_at`, add `InsightSource`
+   - **Get embedding** via `Cerno.Embedding.Pool` (graceful fallback if embedding service is down)
+   - **Semantic dedup:** cosine similarity > 0.92 → merge into existing insight
+   - **New insight:** create with embedding, classify category/tags/domain via `Classifier`
+   - **Contradiction check:** query similarity range 0.5–0.85, create `Contradiction` records
+6. Update `WatchedProject.file_hash` after scan
+7. Log results to `AccumulationRun` (fragments found, insights created/updated, errors)
+8. Broadcast `accumulation:complete` on PubSub
 
 ### Reconciler — `Cerno.Process.Reconciler`
 
@@ -185,7 +191,7 @@ Runs reconciliation within the short-term layer. Auto-triggered after accumulati
 2. Intra-cluster dedup at lower threshold (0.88)
 3. Cross-cluster contradiction scan using layered detection:
    - Negation heuristics (cheap) → embedding flagging (medium) → LLM classification (expensive, budget-capped)
-4. Confidence adjustment: multi-project observations ↑, stale ↓, contradicted ↓
+4. Confidence adjustment rules (multi-project ↑, stale ↓, contradicted ↓)
 5. Flag promotion candidates: confidence > 0.7, observations >= 3, no unresolved contradictions, age > 7 days
 
 ### Organiser — `Cerno.Process.Organiser`
@@ -220,6 +226,23 @@ Drives the downward flow from long-term memory back into `CLAUDE.md` files.
 
 ---
 
+## File Watcher — `Cerno.Watcher.FileWatcher`
+
+Polling-based GenServer that monitors project directories for context file changes. Started dynamically under `Cerno.Watcher.Supervisor` (DynamicSupervisor), registered via `Cerno.Watcher.Registry`.
+
+**Behaviour:**
+1. On start: scan project path for all registered file patterns, hash each file (baseline)
+2. On poll (default 30s): re-hash files, compare against baseline
+3. On change detected: broadcast `{:file_changed, path}` on `file:changed` PubSub topic
+4. Accumulator subscribes to `file:changed` and triggers accumulation
+
+**API:**
+- `start_watching/2` — start watching a project path
+- `stop_watching/1` — stop watching
+- `list_watched/0` — list all watched paths
+
+---
+
 ## Embedding Subsystem — `Cerno.Embedding`
 
 Pluggable embedding system with batching and caching.
@@ -231,13 +254,16 @@ Cerno.Embedding (behaviour)
 └── dimension/0      vector dimension (1536)
 
 Cerno.Embedding.OpenAI    OpenAI API provider (text-embedding-3-small)
-Cerno.Embedding.Pool      GenServer that batches requests (20 items or 500ms flush)
-Cerno.Embedding.Cache     ETS-backed LRU cache (10,000 entries, SHA-256 keys)
+Cerno.Embedding.Mock       Deterministic mock for tests (hash-based vectors)
+Cerno.Embedding.Pool       GenServer that batches requests (20 items or 500ms flush)
+Cerno.Embedding.Cache      ETS-backed LRU cache (10,000 entries, SHA-256 keys)
 ```
 
 The behaviour is implemented by `Cerno.Embedding.OpenAI`. Additional providers (Voyage, Nx/Bumblebee for local inference) can be added by implementing the three callbacks.
 
-Configuration in `config.exs` selects the provider and dimension. The test environment uses `Cerno.Embedding.Mock` (not yet implemented — intended for Mox).
+The test environment uses `Cerno.Embedding.Mock` which generates deterministic embeddings by cycling SHA-256 hash bytes as floats.
+
+**Postgrex types:** Custom `Cerno.PostgrexTypes` module registers `Pgvector.Extensions.Vector` for the `vector` column type.
 
 ---
 
@@ -264,20 +290,32 @@ The Claude formatter:
 
 ---
 
+## Audit Logging
+
+### AccumulationRun — `Cerno.AccumulationRun`
+
+Tracks each accumulation scan. Fields: project_path, status (running/completed/failed), fragments_found, insights_created, insights_updated, errors[], started_at, completed_at.
+
+Convenience functions: `start/1`, `complete/2`, `fail/2`.
+
+---
+
 ## OTP Supervision Tree
 
 ```
 Cerno.Application (one_for_one)
-├── Cerno.Repo                              Ecto PostgreSQL pool
+├── Cerno.Repo                              Ecto PostgreSQL pool (with Cerno.PostgrexTypes)
 ├── {Phoenix.PubSub, name: Cerno.PubSub}    Event bus for process coordination
 ├── Cerno.Embedding.Pool                     Batched embedding requests
 ├── Cerno.Embedding.Cache                    ETS embedding cache
-├── DynamicSupervisor (Cerno.Watcher.Supervisor)   File watchers (not yet populated)
+├── Cerno.Watcher.Registry                   Registry for FileWatcher processes
+├── DynamicSupervisor (Cerno.Watcher.Supervisor)
+│     └── Cerno.Watcher.FileWatcher          Per-project file polling (30s default)
 ├── Task.Supervisor (Cerno.Process.TaskSupervisor)  Async work within processes
-├── Cerno.Process.Accumulator                Files → Short-Term
-├── Cerno.Process.Reconciler                 Short-Term reconciliation
-├── Cerno.Process.Organiser                  Short-Term → Long-Term
-└── Cerno.Process.Resolver                   Long-Term → Files
+├── Cerno.Process.Accumulator                Files → Short-Term (full pipeline)
+├── Cerno.Process.Reconciler                 Short-Term reconciliation (stub)
+├── Cerno.Process.Organiser                  Short-Term → Long-Term (stub)
+└── Cerno.Process.Resolver                   Long-Term → Files (partial)
 ```
 
 ---
@@ -352,27 +390,21 @@ All tuneable parameters are in `config/config.exs`:
 
 ## Tests
 
-31 tests, 0 failures. All pure/unit tests — no database required.
+74 tests, 0 failures. Mix of pure/unit tests and database-backed tests with Ecto sandbox.
 
 | Test file | Tests | Coverage |
 |-----------|-------|----------|
 | `fragment_test.exs` | 4 | Deterministic IDs, hex format, path/content sensitivity |
 | `parser_test.exs` | 18 | Dispatcher routing, `find_parser`, `parse_directory` across subdirs, ClaudeMd H2 splitting, line ranges, edge cases, project derivation |
 | `claude_test.exs` | 9 | Domain grouping, rank ordering, metadata toggle, empty input, output format |
+| `classifier_test.exs` | 16 | Category detection (warning/convention/technique/fact/default), tag detection (multi-tag, limit), domain detection, fragment map input, classification structure |
+| `insight_test.exs` | 11 | Changeset validation, hash_content consistency, CRUD with Ecto sandbox, find_similar with pgvector, unique content_hash constraint |
+| `accumulation_run_test.exs` | 6 | Start/complete/fail lifecycle, error accumulation, changeset validation |
+| `file_watcher_test.exs` | 10 | Start/stop watching, Registry integration, duplicate rejection, change detection via PubSub, no-broadcast on unchanged |
 
 ---
 
 ## What Remains to Be Built
-
-### Phase 2: Complete the Accumulation Pipeline
-
-- [ ] Compute and persist embeddings on Insight records during ingestion
-- [ ] Semantic dedup: query HNSW index for similarity > 0.92, merge instead of creating new
-- [ ] File hash comparison in Accumulator to skip unchanged files
-- [ ] Category, tag, and domain classification (heuristic or LLM-based)
-- [ ] Contradiction detection during ingestion (similarity in 0.5–0.85 range)
-- [ ] Accumulation run audit logging (`accumulation_runs` table)
-- [ ] File watcher GenServer (populate `Cerno.Watcher.Supervisor`)
 
 ### Phase 3: Reconciliation
 
@@ -404,8 +436,7 @@ All tuneable parameters are in `config/config.exs`:
 
 - [ ] Background daemon mode (`cerno daemon start/stop/status`)
 - [ ] Phoenix REST API endpoints (project management, insights/principles CRUD, trigger operations)
-- [ ] Embedding mock for tests (Mox-based `Cerno.Embedding.Mock`)
-- [ ] Integration tests with Ecto sandbox (full accumulation pipeline)
+- [ ] Integration tests with Ecto sandbox (full accumulation pipeline end-to-end)
 - [ ] ChatGPT formatter
 - [ ] Cursor formatter (`Parser.CursorRules` + `Formatter.Cursor`)
 - [ ] Windsurf parser (`Parser.WindsurfRules`)

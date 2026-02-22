@@ -71,6 +71,12 @@ defmodule Cerno.Atomic.Parser do
   @spec parsers() :: [module()]
   def parsers, do: @registered_parsers
 
+  @doc "List all file patterns from registered parsers."
+  @spec registered_patterns() :: [String.t()]
+  def registered_patterns do
+    Enum.map(parsers(), & &1.file_pattern())
+  end
+
   @doc "Find the parser module for a given filename."
   @spec find_parser(String.t()) :: {:ok, module()} | :error
   def find_parser(filename) do
