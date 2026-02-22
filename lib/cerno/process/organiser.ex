@@ -42,8 +42,13 @@ defmodule Cerno.Process.Organiser do
     state = %{state | running: true}
 
     Task.Supervisor.start_child(Cerno.Process.TaskSupervisor, fn ->
-      run_organisation()
-      GenServer.cast(__MODULE__, :done)
+      try do
+        run_organisation()
+      rescue
+        e -> Logger.error("Organisation failed: #{inspect(e)}")
+      after
+        GenServer.cast(__MODULE__, :done)
+      end
     end)
 
     {:noreply, state}

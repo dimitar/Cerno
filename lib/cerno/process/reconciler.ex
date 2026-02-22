@@ -47,8 +47,13 @@ defmodule Cerno.Process.Reconciler do
     state = %{state | running: true}
 
     Task.Supervisor.start_child(Cerno.Process.TaskSupervisor, fn ->
-      run_reconciliation()
-      GenServer.cast(__MODULE__, :done)
+      try do
+        run_reconciliation()
+      rescue
+        e -> Logger.error("Reconciliation failed: #{inspect(e)}")
+      after
+        GenServer.cast(__MODULE__, :done)
+      end
     end)
 
     {:noreply, state}
@@ -124,7 +129,7 @@ defmodule Cerno.Process.Reconciler do
 
     from(i in Insight,
       where: i.status == :active,
-      where: i.confidence > ^min_confidence,
+      where: i.confidence >= ^min_confidence,
       where: i.observation_count >= ^min_observations,
       where: i.inserted_at <= ^min_age_date,
       where:

@@ -55,8 +55,13 @@ defmodule Cerno.Process.Accumulator do
       state = %{state | processing: MapSet.put(state.processing, path)}
 
       Task.Supervisor.start_child(Cerno.Process.TaskSupervisor, fn ->
-        run_accumulation(path)
-        GenServer.cast(__MODULE__, {:done, path})
+        try do
+          run_accumulation(path)
+        rescue
+          e -> Logger.error("Accumulation failed for #{path}: #{inspect(e)}")
+        after
+          GenServer.cast(__MODULE__, {:done, path})
+        end
       end)
 
       {:noreply, state}
