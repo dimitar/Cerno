@@ -13,6 +13,9 @@ defmodule Cerno.Process.Resolver do
   use GenServer
   require Logger
 
+  alias Cerno.LongTerm.Retriever
+  alias Cerno.ResolutionRun
+
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -52,29 +55,91 @@ defmodule Cerno.Process.Resolver do
   defp run_resolution(path, opts) do
     formatter = Keyword.get(opts, :agent, Cerno.Formatter.default())
     dry_run? = Keyword.get(opts, :dry_run, false)
+    agent_type = formatter |> Module.split() |> List.last() |> String.downcase()
 
     Logger.info("Resolving principles into #{path}")
 
-    # TODO Phase 5: implement full resolution pipeline
-    # For now, return a placeholder
-    principles = []
-    formatted = formatter.format_sections(principles, opts)
+    # Step 1: Start audit log
+    {:ok, run} = ResolutionRun.start(path, agent_type)
 
-    if dry_run? do
-      {:ok, formatted}
-    else
-      inject_into_file(path, formatted)
+    try do
+      # Step 2: Read current file content (for domain detection and filtering)
+      file_content = read_file_content(path)
+
+      # Step 3: Retrieve relevant principles
+      {:ok, scored} = Retriever.retrieve_for_file(file_content, opts)
+
+      # Step 4: Filter already-represented and detect conflicts
+      {kept, conflicts} =
+        case Retriever.embed_file_sections(file_content) do
+          {:ok, section_embeddings} when section_embeddings != [] ->
+            Retriever.filter_already_represented(scored, section_embeddings, opts)
+
+          _ ->
+            {scored, []}
+        end
+
+      # Step 5: Build final principles list (conflicts get [CONFLICT] prefix)
+      all_principles = build_principle_list(kept, conflicts)
+
+      # Step 6: Format
+      formatted = formatter.format_sections(all_principles, opts)
+
+      # Step 7: Complete audit log
+      ResolutionRun.complete(run, %{
+        principles_resolved: length(kept),
+        conflicts_detected: length(conflicts)
+      })
+
+      Logger.info("Resolution complete: #{length(kept)} principles, #{length(conflicts)} conflicts")
+
+      # Step 8: Write or return
+      if dry_run? do
+        {:ok, formatted}
+      else
+        inject_into_file(path, formatted)
+      end
+    rescue
+      e ->
+        ResolutionRun.fail(run)
+        Logger.error("Resolution failed: #{inspect(e)}")
+        {:error, e}
     end
+  end
+
+  defp read_file_content(path) do
+    case File.read(path) do
+      {:ok, content} -> content
+      {:error, _} -> ""
+    end
+  end
+
+  defp build_principle_list(kept, conflicts) do
+    kept_principles = Enum.map(kept, fn {p, _score} -> p end)
+
+    conflict_principles =
+      Enum.map(conflicts, fn {p, _score} ->
+        %{p | content: "[CONFLICT] #{p.content}"}
+      end)
+
+    kept_principles ++ conflict_principles
   end
 
   defp inject_into_file(path, formatted_section) do
     case File.read(path) do
       {:ok, content} ->
         new_content = replace_or_append_section(content, formatted_section)
-        File.write(path, new_content)
+
+        case File.write(path, new_content) do
+          :ok -> {:ok, new_content}
+          {:error, reason} -> {:error, reason}
+        end
 
       {:error, :enoent} ->
-        File.write(path, formatted_section)
+        case File.write(path, formatted_section) do
+          :ok -> {:ok, formatted_section}
+          {:error, reason} -> {:error, reason}
+        end
 
       {:error, reason} ->
         {:error, reason}
