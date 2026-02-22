@@ -385,6 +385,56 @@ defmodule Cerno.ShortTerm.ClustererTest do
       end
     end
 
+    test "skips related but non-contradictory content" do
+      now = DateTime.utc_now()
+
+      # Related content about the same topic but NO negation pattern
+      content_a = "Use pattern matching in function heads for clarity"
+      content_b = "Use guard clauses in function heads for validation"
+
+      emb_a = Cerno.Embedding.Mock.deterministic_embedding(content_a)
+      emb_b = Cerno.Embedding.Mock.deterministic_embedding(content_b)
+
+      {:ok, ia} =
+        %Insight{}
+        |> Insight.changeset(%{
+          content: content_a,
+          content_hash: Insight.hash_content(content_a),
+          embedding: emb_a,
+          category: :convention,
+          confidence: 0.7,
+          first_seen_at: now,
+          last_seen_at: now,
+          status: :active
+        })
+        |> Repo.insert()
+
+      {:ok, ib} =
+        %Insight{}
+        |> Insight.changeset(%{
+          content: content_b,
+          content_hash: Insight.hash_content(content_b),
+          embedding: emb_b,
+          category: :convention,
+          confidence: 0.7,
+          first_seen_at: now,
+          last_seen_at: now,
+          status: :active
+        })
+        |> Repo.insert()
+
+      cluster_a = %{insight_ids: [ia.id], centroid: emb_a, coherence: 1.0}
+      cluster_b = %{insight_ids: [ib.id], centroid: emb_b, coherence: 1.0}
+
+      {:ok, count} = Clusterer.scan_cross_cluster_contradictions([cluster_a, cluster_b])
+
+      # No contradictions should be created — related content without negation
+      import Ecto.Query
+      contradictions = Repo.all(from(c in Contradiction))
+      assert contradictions == []
+      assert count == 0
+    end
+
     test "returns {:ok, 0} when no clusters to compare" do
       assert {:ok, 0} = Clusterer.scan_cross_cluster_contradictions([])
     end

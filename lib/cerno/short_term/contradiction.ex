@@ -11,6 +11,33 @@ defmodule Cerno.ShortTerm.Contradiction do
   import Ecto.Changeset
 
   @contradiction_types ~w(direct partial contextual)a
+
+  @negation_pairs [
+    {"always", "never"},
+    {"do", "don't"},
+    {"use", "avoid"},
+    {"should", "should not"},
+    {"prefer", "avoid"},
+    {"must", "must not"},
+    {"enable", "disable"}
+  ]
+
+  @doc """
+  Check whether two content strings contain a negation pattern.
+
+  Returns `true` if one string contains a word from a negation pair and the
+  other contains its opposite (e.g. "always" ↔ "never", "use" ↔ "avoid").
+  """
+  @spec has_negation?(String.t(), String.t()) :: boolean()
+  def has_negation?(content_a, content_b) do
+    a_lower = String.downcase(content_a)
+    b_lower = String.downcase(content_b)
+
+    Enum.any?(@negation_pairs, fn {pos, neg} ->
+      (String.contains?(a_lower, pos) and String.contains?(b_lower, neg)) or
+        (String.contains?(a_lower, neg) and String.contains?(b_lower, pos))
+    end)
+  end
   @resolution_statuses ~w(unresolved resolved dismissed)a
 
   schema "contradictions" do

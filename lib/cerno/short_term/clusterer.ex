@@ -361,26 +361,13 @@ defmodule Cerno.ShortTerm.Clusterer do
 
   # --- Cross-cluster contradiction scanning ---
 
-  @negation_pairs [
-    {"always", "never"},
-    {"do", "don't"},
-    {"use", "avoid"},
-    {"should", "should not"},
-    {"prefer", "avoid"},
-    {"must", "must not"},
-    {"enable", "disable"}
-  ]
-
   @doc """
   Scan for contradictions between clusters.
 
   Compares centroids of different clusters. If centroid similarity falls in the
   contradiction range (0.5-0.85), compares member insight pairs across clusters
-  using a negation heuristic to determine contradiction type.
-
-  Creates Contradiction records: `:direct` if negation pattern found, `:partial`
-  if detected by embedding similarity only. Skips pairs that already have a
-  contradiction record.
+  using a negation heuristic. Only creates `:direct` contradictions when a
+  negation pattern is found. Skips pairs that already have a contradiction record.
 
   Returns `{:ok, count}` of contradictions created.
   """
@@ -446,62 +433,43 @@ defmodule Cerno.ShortTerm.Clusterer do
   end
 
   defp create_cross_contradiction(insight_a, insight_b, similarity) do
-    # Normalize order: lower ID first
-    {first, second} =
-      if insight_a.id < insight_b.id,
-        do: {insight_a, insight_b},
-        else: {insight_b, insight_a}
-
-    # Check if contradiction already exists
-    existing =
-      from(c in Contradiction,
-        where:
-          (c.insight_a_id == ^first.id and c.insight_b_id == ^second.id) or
-            (c.insight_a_id == ^second.id and c.insight_b_id == ^first.id)
-      )
-      |> Repo.one()
-
-    if existing do
+    # Only create contradictions when negation pattern is found
+    unless Contradiction.has_negation?(insight_a.content, insight_b.content) do
       :exists
     else
-      contradiction_type = detect_contradiction_type(first.content, second.content)
+      # Normalize order: lower ID first
+      {first, second} =
+        if insight_a.id < insight_b.id,
+          do: {insight_a, insight_b},
+          else: {insight_b, insight_a}
 
-      description =
-        case contradiction_type do
-          :direct ->
-            "Direct contradiction detected via negation pattern (similarity: #{Float.round(similarity, 3)})"
+      # Check if contradiction already exists
+      existing =
+        from(c in Contradiction,
+          where:
+            (c.insight_a_id == ^first.id and c.insight_b_id == ^second.id) or
+              (c.insight_a_id == ^second.id and c.insight_b_id == ^first.id)
+        )
+        |> Repo.one()
 
-          :partial ->
-            "Partial contradiction detected via cross-cluster embedding similarity (similarity: #{Float.round(similarity, 3)})"
+      if existing do
+        :exists
+      else
+        attrs = %{
+          insight_a_id: first.id,
+          insight_b_id: second.id,
+          contradiction_type: :direct,
+          detected_by: "clusterer",
+          similarity_score: similarity,
+          description: "Direct contradiction detected via negation pattern (similarity: #{Float.round(similarity, 3)})"
+        }
+
+        case %Contradiction{} |> Contradiction.changeset(attrs) |> Repo.insert() do
+          {:ok, _} -> :created
+          {:error, _} -> :exists
         end
-
-      attrs = %{
-        insight_a_id: first.id,
-        insight_b_id: second.id,
-        contradiction_type: contradiction_type,
-        detected_by: "clusterer",
-        similarity_score: similarity,
-        description: description
-      }
-
-      case %Contradiction{} |> Contradiction.changeset(attrs) |> Repo.insert() do
-        {:ok, _} -> :created
-        {:error, _} -> :exists
       end
     end
-  end
-
-  defp detect_contradiction_type(content_a, content_b) do
-    a_lower = String.downcase(content_a)
-    b_lower = String.downcase(content_b)
-
-    has_negation =
-      Enum.any?(@negation_pairs, fn {pos, neg} ->
-        (String.contains?(a_lower, pos) and String.contains?(b_lower, neg)) or
-          (String.contains?(a_lower, neg) and String.contains?(b_lower, pos))
-      end)
-
-    if has_negation, do: :direct, else: :partial
   end
 
   # --- Helpers ---

@@ -309,13 +309,19 @@ defmodule Cerno.Process.Accumulator do
   defp check_contradictions(insight, embedding) do
     candidates = Insight.find_contradictions(embedding, exclude_id: insight.id)
 
-    Enum.each(candidates, fn {other, similarity} ->
-      create_contradiction(insight, other, similarity)
-    end)
+    created =
+      candidates
+      |> Enum.filter(fn {other, _similarity} ->
+        Contradiction.has_negation?(insight.content, other.content)
+      end)
+      |> Enum.map(fn {other, similarity} ->
+        create_contradiction(insight, other, similarity)
+      end)
+      |> Enum.count(&(&1 == :ok))
 
-    if length(candidates) > 0 do
+    if created > 0 do
       Logger.info(
-        "Found #{length(candidates)} potential contradiction(s) for insight #{insight.id}"
+        "Found #{created} contradiction(s) for insight #{insight.id}"
       )
     end
   end
@@ -330,10 +336,10 @@ defmodule Cerno.Process.Accumulator do
     attrs = %{
       insight_a_id: first_id,
       insight_b_id: second_id,
-      contradiction_type: :partial,
+      contradiction_type: :direct,
       detected_by: "accumulator",
       similarity_score: similarity,
-      description: "Detected during accumulation (similarity: #{Float.round(similarity, 3)})"
+      description: "Direct contradiction detected via negation pattern (similarity: #{Float.round(similarity, 3)})"
     }
 
     case %Contradiction{} |> Contradiction.changeset(attrs) |> Repo.insert() do
