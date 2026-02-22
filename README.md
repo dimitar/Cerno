@@ -89,7 +89,7 @@ git clone https://github.com/dimitar/Cerno.git
 cd Cerno
 mix deps.get
 mix ecto.setup    # Creates database and runs migrations
-mix test          # 164 tests, 0 failures
+mix test          # 166 tests, 0 failures
 ```
 
 ### CLI Usage

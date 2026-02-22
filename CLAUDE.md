@@ -38,7 +38,7 @@ lib/cerno/
 └── cli.ex
 config/               Environment configs (dev, test, runtime)
 priv/repo/migrations/ Postgres schema (pgvector, HNSW indexes)
-test/                 ExUnit tests (164 passing)
+test/                 ExUnit tests (166 passing)
 ```
 
 ## Design Principles
@@ -67,7 +67,7 @@ export PATH="/c/Program Files/Erlang OTP/bin:/c/Program Files/Erlang OTP/erts-16
 mix deps.get          # Fetch dependencies
 mix ecto.setup        # Create DB + run migrations (needs Postgres with pgvector)
 mix compile           # Compile (should be 0 warnings)
-mix test              # Run tests (164 passing)
+mix test              # Run tests (166 passing)
 ```
 
 **Database:** Postgres password is configured in `config/dev.exs` and `config/test.exs`.

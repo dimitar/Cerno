@@ -403,7 +403,7 @@ All tuneable parameters are in `config/config.exs`:
 
 ## Tests
 
-164 tests, 0 failures. Mix of pure/unit tests and database-backed tests with Ecto sandbox.
+166 tests, 0 failures. Mix of pure/unit tests and database-backed tests with Ecto sandbox.
 
 | Test file | Tests | Coverage |
 |-----------|-------|----------|
@@ -424,6 +424,7 @@ All tuneable parameters are in `config/config.exs`:
 | `retriever_test.exs` | 17 | Domain detection, hybrid scoring, min_score/max_principles filtering, already-represented filtering, conflict detection, section embedding |
 | `resolution_run_test.exs` | 6 | Start/complete/fail lifecycle, custom agent type, changeset validation |
 | `resolver_test.exs` | 6 | Dry-run output, principle inclusion, empty principles, audit log creation, file write, content preservation |
+| `full_pipeline_test.exs` | 2 | E2E: scan → accumulate → reconcile → organise → resolve (verifies insights, principles, derivations, audit logs, file injection), empty project handling |
 
 ---
 
