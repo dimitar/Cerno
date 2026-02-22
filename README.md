@@ -17,6 +17,11 @@ AI agents accumulate knowledge in scattered, session-scoped files (like `CLAUDE.
 
 Cerno organises knowledge into three layers, with processes governing the flow between them.
 
+```
+Atomic Memory ──accumulate──▶ Short-Term Memory ──distil──▶ Long-Term Memory
+     ◀──resolve───                    ◀──recall──
+```
+
 ### Layer 1: Atomic Memory
 
 The working memory of a single project or task. Files like `CLAUDE.md` that contain context-specific rules, principles, and conventions. This is the **attention layer** — what the agent focuses on right now.
@@ -24,6 +29,7 @@ The working memory of a single project or task. Files like `CLAUDE.md` that cont
 - Scoped to a single project or task
 - Directly consumed by the agent during execution
 - The most concrete, actionable layer
+- **Agent-agnostic input:** pluggable parsers handle different formats (`CLAUDE.md`, `.cursorrules`, etc.)
 
 ### Layer 2: Short-Term Memory
 
@@ -31,10 +37,10 @@ A collective grouping across atomic memory files. This layer aggregates knowledg
 
 A **reconciliation process** runs at this layer which:
 
-- Deduplicates overlapping knowledge
+- Deduplicates overlapping knowledge (exact hash + semantic embedding similarity)
 - Flags contradictions for resolution
 - Clusters related observations into emerging patterns
-- Optimises output format per agent type (e.g., Claude vs ChatGPT vs other LLMs)
+- Adjusts confidence based on frequency, recency, and cross-project validation
 
 ### Layer 3: Long-Term Memory
 
@@ -49,25 +55,70 @@ An **organisation process** at this layer:
 - Ranks knowledge by confidence, frequency, and recency
 - Links related concepts across domains
 - Prunes outdated or superseded knowledge
-- Resolves accumulated wisdom back downward into short-term memory and atomic files when a relevant task or project is being worked on
+- Resolves accumulated wisdom back downward into atomic files when a relevant task is being worked on
 
-## Bidirectional Flow
+## Agent-Specific I/O
 
-The defining mechanic of Cerno is that knowledge flows in both directions:
+Cerno is agent-agnostic at its core. Both input and output adapt per agent:
 
+- **Input:** Pluggable parsers (`Cerno.Atomic.Parser` behaviour) handle each agent's context file format
+- **Output:** Pluggable formatters (`Cerno.Formatter` behaviour) render resolved knowledge into the right format for each agent
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|-----------|
+| Language | Elixir 1.19 / OTP 28 |
+| Database | PostgreSQL 18 + pgvector (HNSW indexes) |
+| Web | Phoenix 1.7 (PubSub, REST API) |
+| Embeddings | Pluggable — OpenAI text-embedding-3-small (default) |
+| Interface | CLI (escript) + REST API |
+
+## Getting Started
+
+### Prerequisites
+
+- Elixir 1.19+
+- Erlang/OTP 28+
+- PostgreSQL with [pgvector](https://github.com/pgvector/pgvector) extension
+
+### Setup
+
+```bash
+git clone https://github.com/dimitar/Cerno.git
+cd Cerno
+mix deps.get
+mix ecto.setup    # Creates database and runs migrations
+mix test          # 31 tests, 0 failures
 ```
-Atomic Memory ──accumulate──▶ Short-Term Memory ──distil──▶ Long-Term Memory
-     ◀──resolve───                    ◀──recall──
+
+### CLI Usage
+
+```bash
+cerno init <path>              # Register a project for watching
+cerno scan [<path>]            # Scan for context file changes
+cerno resolve <path> [--dry-run]  # Resolve principles into a context file
+cerno status                   # Show system status
+cerno insights                 # List short-term insights
+cerno principles               # List long-term principles
+cerno reconcile                # Trigger reconciliation
+cerno organise                 # Trigger organisation
 ```
 
-**Upward (accumulation):** Raw observations from project work are gathered, sorted, and distilled into higher-order knowledge.
+## Documentation
 
-**Downward (resolution):** When a new task begins, relevant long-term knowledge is recalled, adapted to context, and resolved into the agent's working memory.
-
-## Agent-Specific Optimisation
-
-The short-term memory layer is format-aware. Different AI agents consume context differently — what works as a `CLAUDE.md` for Claude may not be optimal for ChatGPT's system prompt or another agent's context window. Cerno adapts its output format per target agent.
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Current implementation status, module inventory, what's built vs remaining
+- **[docs/DESIGN.md](docs/DESIGN.md)** — Original architecture specification from the planning phase
 
 ## Status
 
-Early conceptual phase. Architecture and processes under active design.
+Phase 1 (Foundation) complete. Phase 2 (Accumulation Pipeline) in progress.
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1. Foundation | Project setup, data models, OTP tree, schema, CLI | Done |
+| 2. Accumulation | Embedding persistence, semantic dedup, contradiction detection | In Progress |
+| 3. Reconciliation | Clustering, cross-cluster dedup, confidence adjustment | Planned |
+| 4. Organisation | Insight → Principle promotion, ranking, pruning | Planned |
+| 5. Resolution | Principle retrieval, context-aware injection | Planned |
+| 6. Polish | Daemon mode, REST API, additional parsers/formatters | Planned |

@@ -2,41 +2,79 @@
 
 ## Project Overview
 
-Cerno is a layered, bidirectional memory system for AI agents. You are building the architecture and processes that govern how knowledge accumulates upward from atomic project files into long-term wisdom, and resolves back down into working memory when needed.
+Cerno is a bidirectional memory system for AI agents, built in Elixir/OTP. Knowledge from per-project context files (`CLAUDE.md`, `.cursorrules`, etc.) accumulates upward through three layers and resolves back downward into working memory.
+
+**Stack:** Elixir 1.19, OTP 28, Phoenix 1.7, Ecto, PostgreSQL 18 + pgvector.
 
 ## Architecture
 
-Three layers, each with distinct responsibilities:
+Three layers with four processes connecting them:
 
-1. **Atomic Memory** — Single-project context files (e.g., `CLAUDE.md`). The agent's working memory for a specific task. Most concrete and actionable.
-2. **Short-Term Memory** — Aggregated knowledge across projects. Contains duplication and contradiction by design. A reconciliation process deduplicates, flags conflicts, clusters patterns, and formats output per agent type.
-3. **Long-Term Memory** — Rationalised, ranked, linked knowledge distilled from short-term memory over time. Learnings, principles, and morals. An organisation process manages ranking, linking, pruning, and downward resolution.
+1. **Atomic** (`lib/cerno/atomic/`) — In-memory Fragments parsed from context files. Pluggable parsers per agent format.
+2. **Short-Term** (`lib/cerno/short_term/`) — Insights in Postgres. Deduplicated, tagged, contradiction-aware.
+3. **Long-Term** (`lib/cerno/long_term/`) — Principles in Postgres. Ranked, linked, distilled from insights.
 
-## Core Mechanics
+**Processes** (`lib/cerno/process/`): Accumulator → Reconciler → Organiser, plus Resolver for downward flow. Connected via Phoenix PubSub.
 
-- **Accumulation (upward):** Atomic → Short-Term → Long-Term. Raw observations are gathered, sorted, and distilled.
-- **Resolution (downward):** Long-Term → Short-Term → Atomic. Relevant knowledge is recalled, adapted, and injected into working memory for a task.
-- **Reconciliation:** Deduplication, contradiction detection, pattern clustering at the short-term layer.
-- **Organisation:** Ranking by confidence/frequency/recency, cross-domain linking, pruning at the long-term layer.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for full details. See [docs/DESIGN.md](docs/DESIGN.md) for the original specification.
+
+## Project Structure
+
+```
+lib/cerno/
+├── atomic/           Fragment struct, Parser behaviour, ClaudeMd parser
+├── short_term/       Insight, InsightSource, Contradiction, Cluster schemas
+├── long_term/        Principle, Derivation, PrincipleLink schemas
+├── process/          Accumulator, Reconciler, Organiser, Resolver GenServers
+├── embedding/        Embedding behaviour, OpenAI provider, Pool, Cache
+├── formatter/        Formatter behaviour, Claude formatter
+├── application.ex    OTP supervision tree
+├── repo.ex           Ecto Repo
+├── watched_project.ex
+└── cli.ex
+config/               Environment configs (dev, test, runtime)
+priv/repo/migrations/ Postgres schema (pgvector, HNSW indexes)
+test/                 ExUnit tests (23 passing)
+```
 
 ## Design Principles
 
-- **Bidirectionality is the defining constraint.** Every data structure and process must support both upward accumulation and downward resolution.
-- **Agent-agnostic storage, agent-specific output.** The memory store is universal; the rendering into working memory adapts per agent type (Claude, ChatGPT, etc.).
-- **Knowledge has weight.** Observations are not equal — confidence, frequency, recency, and source quality all factor into ranking.
-- **Contradiction is expected.** The system does not prevent contradictory knowledge from entering; it detects and resolves contradictions through explicit processes.
-- **Pruning is as important as accumulation.** Outdated, superseded, or low-confidence knowledge must be actively removed.
+- **Bidirectionality is the defining constraint.** Every data structure must support both upward accumulation and downward resolution.
+- **Agent-agnostic storage, agent-specific I/O.** Parsers adapt input per agent format; formatters adapt output. The memory store is universal.
+- **Knowledge has weight.** Confidence, frequency, recency, and source quality all factor into ranking.
+- **Contradiction is expected.** Detected and resolved explicitly, never silently prevented.
+- **Pluggable interfaces.** Behaviours for parsers, embeddings, and formatters. New agents = new implementation, not new architecture.
 
-## Conventions
+## Coding Conventions
 
-- Keep code simple and modular. Each layer and process should be independently testable.
-- Prefer explicit data models over implicit conventions.
-- Document decisions in commit messages — this project is about knowledge management, so practice what it preaches.
-- When in doubt about a design choice, favour the option that preserves bidirectionality.
+- **Behaviours for extension points.** `Cerno.Atomic.Parser`, `Cerno.Embedding`, `Cerno.Formatter` — implement callbacks, register, done.
+- **GenServers for stateful processes.** Accumulator, Reconciler, Organiser, Resolver each own their lifecycle. Mutual exclusion via state flags. Async work via Task.Supervisor.
+- **PubSub for coordination.** Processes communicate via Phoenix.PubSub topics, not direct calls.
+- **Ecto schemas with changesets.** All DB types use explicit changesets with validation. Enums via `Ecto.Enum`.
+- **Keep modules small.** One schema per file, one process per file.
+- **Tests don't need Postgres.** Pure logic tests use `async: true`. Integration tests (future) use Ecto sandbox.
+
+## Running
+
+```bash
+# Windows: Elixir and Erlang must be on PATH
+export PATH="/c/Program Files/Erlang OTP/bin:/c/Program Files/Erlang OTP/erts-16.2.1/bin:/c/Program Files/Elixir/bin:$PATH"
+
+mix deps.get          # Fetch dependencies
+mix ecto.setup        # Create DB + run migrations (needs Postgres with pgvector)
+mix compile           # Compile (should be 0 warnings)
+mix test              # Run tests (31 passing)
+```
+
+**Database:** Postgres password is configured in `config/dev.exs` and `config/test.exs`.
 
 ## Current Phase
 
-Early conceptual and architectural design. Focus on:
-- Defining data models for knowledge units at each layer
-- Designing the reconciliation and organisation processes
-- Determining storage format and inter-layer interfaces
+Phase 1 (Foundation) is complete. Starting Phase 2 (Accumulation Pipeline):
+- Embedding computation and persistence during ingestion
+- Semantic dedup via HNSW similarity search
+- File hash comparison to skip unchanged files
+- Category/tag/domain classification
+- Contradiction detection during ingestion
+- Accumulation run audit logging
+- File watcher GenServer
