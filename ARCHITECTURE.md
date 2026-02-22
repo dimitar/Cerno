@@ -111,6 +111,8 @@ Insight (Postgres: insights)
 | `Cerno.ShortTerm.Contradiction` | Ecto schema, changeset | Complete |
 | `Cerno.ShortTerm.Cluster` | Ecto schema, changeset | Complete |
 | `Cerno.ShortTerm.Classifier` | Heuristic category/tag/domain classification | Complete |
+| `Cerno.ShortTerm.Clusterer` | Connected-component clustering, intra-cluster dedup, cross-cluster contradiction scan, `cosine_similarity/2` | Complete |
+| `Cerno.ShortTerm.Confidence` | Multi-project boost, stale decay, contradiction penalty, observation floor, `adjust_all/0` | Complete |
 
 ### 3. Long-Term Memory — `Cerno.LongTerm`
 
@@ -184,15 +186,13 @@ Drives the upward flow from files to short-term memory. Full pipeline implemente
 
 Runs reconciliation within the short-term layer. Auto-triggered after accumulation completes.
 
-**Current implementation:** Framework only — GenServer with mutual exclusion (`running` flag), PubSub subscription, and task delegation. The `run_reconciliation/0` function is a stub.
-
-**Planned implementation (Phase 3):**
-1. Re-cluster all active insights using embedding similarity (DBSCAN or k-means)
-2. Intra-cluster dedup at lower threshold (0.88)
-3. Cross-cluster contradiction scan using layered detection:
-   - Negation heuristics (cheap) → embedding flagging (medium) → LLM classification (expensive, budget-capped)
-4. Confidence adjustment rules (multi-project ↑, stale ↓, contradicted ↓)
-5. Flag promotion candidates: confidence > 0.7, observations >= 3, no unresolved contradictions, age > 7 days
+**Current implementation:**
+1. Cluster all active insights via `Clusterer.cluster_insights/0` — builds embedding similarity graph at 0.88 threshold, finds connected components via BFS, computes centroid and coherence per cluster
+2. Intra-cluster dedup via `Clusterer.dedup_within_clusters/1` — within each cluster, winner (highest observation count) absorbs losers with similarity >= 0.88, losers marked `:superseded`
+3. Re-cluster and persist via `Clusterer.persist_clusters/1` — full rebuild (delete old, insert new)
+4. Cross-cluster contradiction scan via `Clusterer.scan_cross_cluster_contradictions/1` — compare centroids, if in 0.5–0.85 range, check member pairs with negation heuristic ("always"↔"never", "use"↔"avoid", "should"↔"should not", etc.), creates `Contradiction` records (`:direct` for negation match, `:partial` for embedding-only)
+5. Confidence adjustment via `Confidence.adjust_all/0` — multi-project boost (+0.05 per additional project), stale decay (×0.9 after 90 days), contradiction penalty (×0.8), observation floor (log scale, capped at 0.6), clamped to [0.0, 1.0]
+6. Log promotion candidates via `promotion_candidates/0` — confidence > 0.7, observations >= 3, age > 7 days, no unresolved contradictions, not already promoted (configurable via `:cerno, :promotion`)
 
 ### Organiser — `Cerno.Process.Organiser`
 
@@ -313,7 +313,7 @@ Cerno.Application (one_for_one)
 │     └── Cerno.Watcher.FileWatcher          Per-project file polling (30s default)
 ├── Task.Supervisor (Cerno.Process.TaskSupervisor)  Async work within processes
 ├── Cerno.Process.Accumulator                Files → Short-Term (full pipeline)
-├── Cerno.Process.Reconciler                 Short-Term reconciliation (stub)
+├── Cerno.Process.Reconciler                 Short-Term reconciliation (full pipeline)
 ├── Cerno.Process.Organiser                  Short-Term → Long-Term (stub)
 └── Cerno.Process.Resolver                   Long-Term → Files (partial)
 ```
@@ -385,12 +385,21 @@ All tuneable parameters are in `config/config.exs`:
 | Decay half-life | 90 days | How fast knowledge decays without reinforcement |
 | Decay threshold | 0.15 rank | Below this, status moves to `decaying` |
 | Prune threshold | 0.10 rank | Below this, status moves to `pruned` |
+| Promotion min confidence | 0.7 | Minimum confidence for promotion candidates |
+| Promotion min observations | 3 | Minimum observation count for promotion |
+| Promotion min age | 7 days | Minimum age before an insight can be promoted |
+| Resolution semantic weight | 0.5 | Semantic similarity weight in hybrid scoring |
+| Resolution rank weight | 0.3 | Rank weight in hybrid scoring |
+| Resolution domain weight | 0.2 | Domain match weight in hybrid scoring |
+| Resolution min hybrid score | 0.3 | Minimum hybrid score for inclusion |
+| Resolution max principles | 20 | Maximum principles to resolve into a file |
+| Already-represented threshold | 0.85 | Similarity above which a principle is filtered out |
 
 ---
 
 ## Tests
 
-74 tests, 0 failures. Mix of pure/unit tests and database-backed tests with Ecto sandbox.
+114 tests, 0 failures. Mix of pure/unit tests and database-backed tests with Ecto sandbox.
 
 | Test file | Tests | Coverage |
 |-----------|-------|----------|
@@ -401,18 +410,22 @@ All tuneable parameters are in `config/config.exs`:
 | `insight_test.exs` | 11 | Changeset validation, hash_content consistency, CRUD with Ecto sandbox, find_similar with pgvector, unique content_hash constraint |
 | `accumulation_run_test.exs` | 6 | Start/complete/fail lifecycle, error accumulation, changeset validation |
 | `file_watcher_test.exs` | 10 | Start/stop watching, Registry integration, duplicate rejection, change detection via PubSub, no-broadcast on unchanged |
+| `clusterer_test.exs` | 19 | Cosine similarity math, connected components (BFS), cluster_insights with DB, persist/rebuild, intra-cluster dedup (merge + supersede), cross-cluster contradiction scan |
+| `confidence_test.exs` | 15 | Multi-project boost, stale decay, contradiction penalty, observation floor, clamping, adjust_all lifecycle, distinct_project_count, has_unresolved_contradictions |
+| `reconciler_test.exs` | 6 | Promotion candidates (criteria filtering, exclusions), full pipeline integration (PubSub broadcast, cluster creation) |
 
 ---
 
 ## What Remains to Be Built
 
-### Phase 3: Reconciliation
+### ~~Phase 3: Reconciliation~~ — Complete
 
-- [ ] Semantic clustering of active insights (DBSCAN or k-means on embeddings)
-- [ ] Intra-cluster dedup at 0.88 threshold
-- [ ] Cross-cluster contradiction scan (negation heuristic → embedding → LLM layered detection)
-- [ ] Confidence adjustment rules (multi-project ↑, stale ↓, contradicted ↓)
-- [ ] Promotion candidate flagging (confidence > 0.7, observations >= 3, age > 7d, no unresolved contradictions)
+- [x] Connected-component clustering via BFS on embedding similarity graph (threshold 0.88)
+- [x] Intra-cluster dedup — winner absorbs loser's observation_count, max last_seen_at, loser → `:superseded`
+- [x] Cross-cluster contradiction scan — centroid comparison + negation heuristic + `Contradiction` record creation
+- [x] Confidence adjustment — multi-project boost, stale decay, contradiction penalty, observation floor
+- [x] Promotion candidate flagging (configurable via `:cerno, :promotion`)
+- [x] Full Reconciler GenServer wiring with PubSub integration
 
 ### Phase 4: Organisation & Long-Term
 

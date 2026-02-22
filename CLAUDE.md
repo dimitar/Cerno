@@ -23,7 +23,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full details. See [docs/DESIGN.md](do
 ```
 lib/cerno/
 ├── atomic/           Fragment struct, Parser behaviour, ClaudeMd parser
-├── short_term/       Insight, InsightSource, Contradiction, Cluster, Classifier
+├── short_term/       Insight, InsightSource, Contradiction, Cluster, Classifier, Clusterer, Confidence
 ├── long_term/        Principle, Derivation, PrincipleLink schemas
 ├── process/          Accumulator, Reconciler, Organiser, Resolver GenServers
 ├── embedding/        Embedding behaviour, OpenAI provider, Mock, Pool, Cache
@@ -37,7 +37,7 @@ lib/cerno/
 └── cli.ex
 config/               Environment configs (dev, test, runtime)
 priv/repo/migrations/ Postgres schema (pgvector, HNSW indexes)
-test/                 ExUnit tests (74 passing)
+test/                 ExUnit tests (114 passing)
 ```
 
 ## Design Principles
@@ -66,13 +66,13 @@ export PATH="/c/Program Files/Erlang OTP/bin:/c/Program Files/Erlang OTP/erts-16
 mix deps.get          # Fetch dependencies
 mix ecto.setup        # Create DB + run migrations (needs Postgres with pgvector)
 mix compile           # Compile (should be 0 warnings)
-mix test              # Run tests (74 passing)
+mix test              # Run tests (114 passing)
 ```
 
 **Database:** Postgres password is configured in `config/dev.exs` and `config/test.exs`.
 
 ## Current Phase
 
-Phases 1 (Foundation) and 2 (Accumulation Pipeline) are complete. Next: Phase 3 (Reconciliation).
+Phases 1 (Foundation), 2 (Accumulation Pipeline), and 3 (Reconciliation) are complete. Next: Phase 4 (Organisation).
 
-Phase 2 delivered: full accumulation pipeline with file hash comparison, exact + semantic dedup (pgvector HNSW at 0.92 threshold), heuristic classification, contradiction detection (0.5–0.85 range), accumulation run audit logging, and polling file watcher with PubSub integration.
+Phase 3 delivered: connected-component clustering via BFS on embedding similarity graphs (threshold 0.88), intra-cluster deduplication (merge near-duplicates, winner absorbs loser's counts), cross-cluster contradiction scanning with negation heuristics ("always"↔"never", "use"↔"avoid", etc.), confidence adjustment pipeline (multi-project boost +0.05/project, stale decay ×0.9 after 90d, contradiction penalty ×0.8, observation floor via log scale), promotion candidate identification, and full Reconciler GenServer wiring with PubSub integration.
