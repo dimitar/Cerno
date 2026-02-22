@@ -12,9 +12,10 @@ defmodule Cerno.ShortTerm.Contradiction do
 
   @contradiction_types ~w(direct partial contextual)a
 
+  # Word-boundary negation pairs. Each pair is compiled to regexes at compile time.
+  # "do"/"don't" intentionally excluded — too common even with word boundaries.
   @negation_pairs [
     {"always", "never"},
-    {"do", "don't"},
     {"use", "avoid"},
     {"should", "should not"},
     {"prefer", "avoid"},
@@ -22,20 +23,23 @@ defmodule Cerno.ShortTerm.Contradiction do
     {"enable", "disable"}
   ]
 
+  @negation_regexes Enum.map(@negation_pairs, fn {pos, neg} ->
+    {Regex.compile!("\\b#{Regex.escape(pos)}\\b", "i"),
+     Regex.compile!("\\b#{Regex.escape(neg)}\\b", "i")}
+  end)
+
   @doc """
   Check whether two content strings contain a negation pattern.
 
+  Uses word-boundary matching so "use" won't match "because" or "focused".
   Returns `true` if one string contains a word from a negation pair and the
   other contains its opposite (e.g. "always" ↔ "never", "use" ↔ "avoid").
   """
   @spec has_negation?(String.t(), String.t()) :: boolean()
   def has_negation?(content_a, content_b) do
-    a_lower = String.downcase(content_a)
-    b_lower = String.downcase(content_b)
-
-    Enum.any?(@negation_pairs, fn {pos, neg} ->
-      (String.contains?(a_lower, pos) and String.contains?(b_lower, neg)) or
-        (String.contains?(a_lower, neg) and String.contains?(b_lower, pos))
+    Enum.any?(@negation_regexes, fn {pos_re, neg_re} ->
+      (Regex.match?(pos_re, content_a) and Regex.match?(neg_re, content_b)) or
+        (Regex.match?(neg_re, content_a) and Regex.match?(pos_re, content_b))
     end)
   end
   @resolution_statuses ~w(unresolved resolved dismissed)a
