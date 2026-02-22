@@ -1,66 +1,86 @@
 defmodule Cerno.Atomic.Parser do
   @moduledoc """
-  Parses CLAUDE.md files into Fragment structs.
+  Behaviour for parsing agent context files into Fragment structs.
 
-  Splits the file by H2 headings (`## ...`). Each section becomes a Fragment
-  with a deterministic ID, source tracking, and line range information.
-  Nested CLAUDE.md files are parsed independently with subdirectory context.
+  Different AI agents use different context file formats:
+  - Claude → `CLAUDE.md` (markdown, H2 sections)
+  - Cursor → `.cursorrules` (flat rules)
+  - Windsurf → `.windsurfrules`
+  - ChatGPT → custom instructions
+
+  Each format gets its own parser implementation. The behaviour defines
+  the contract; the dispatcher routes files to the correct parser based
+  on filename.
   """
 
   alias Cerno.Atomic.Fragment
 
-  @doc """
-  Parse a CLAUDE.md file at the given path into a list of Fragments.
+  @doc "Parse a file at the given path into a list of Fragments."
+  @callback parse(path :: String.t()) :: {:ok, [Fragment.t()]} | {:error, term()}
 
-  Returns `{:ok, [Fragment.t()]}` or `{:error, reason}`.
+  @doc "The glob pattern this parser handles (e.g., `CLAUDE.md`, `.cursorrules`)."
+  @callback file_pattern() :: String.t()
+
+  @registered_parsers [
+    Cerno.Atomic.Parser.ClaudeMd
+  ]
+
+  @doc """
+  Parse a file using the appropriate parser for its filename.
+
+  Returns `{:ok, [Fragment.t()]}` or `{:error, :unknown_format}` if no
+  parser is registered for the file.
   """
   @spec parse(String.t()) :: {:ok, [Fragment.t()]} | {:error, term()}
   def parse(path) do
-    with {:ok, content} <- File.read(path) do
-      file_hash = hash_file(content)
-      project = derive_project(path)
-      now = DateTime.utc_now()
+    filename = Path.basename(path)
 
-      fragments =
-        content
-        |> split_sections()
-        |> Enum.map(fn section ->
-          id = Fragment.build_id(path, section.content)
-
-          %Fragment{
-            id: id,
-            content: section.content,
-            source_path: Path.expand(path),
-            source_project: project,
-            section_heading: section.heading,
-            line_range: {section.line_start, section.line_end},
-            file_hash: file_hash,
-            extracted_at: now
-          }
-        end)
-        |> Enum.reject(fn f -> String.trim(f.content) == "" end)
-
-      {:ok, fragments}
+    case find_parser(filename) do
+      {:ok, parser} -> parser.parse(path)
+      :error -> {:error, :unknown_format}
     end
   end
 
   @doc """
-  Parse all CLAUDE.md files found under a directory (recursive).
-  """
-  @spec parse_directory(String.t()) :: {:ok, [Fragment.t()]} | {:error, term()}
-  def parse_directory(dir) do
-    pattern = Path.join([dir, "**", "CLAUDE.md"])
+  Parse all recognised context files found under a directory (recursive).
 
+  Scans for every registered file pattern and parses all matches.
+  """
+  @spec parse_directory(String.t()) :: {:ok, [Fragment.t()]}
+  def parse_directory(dir) do
     fragments =
-      Path.wildcard(pattern)
-      |> Enum.flat_map(fn path ->
-        case parse(path) do
-          {:ok, frags} -> frags
-          {:error, _} -> []
-        end
+      parsers()
+      |> Enum.flat_map(fn parser ->
+        pattern =
+          Path.join([dir, "**", parser.file_pattern()])
+          |> normalize_path()
+
+        Path.wildcard(pattern)
+        |> Enum.flat_map(fn path ->
+          case parser.parse(path) do
+            {:ok, frags} -> frags
+            {:error, _} -> []
+          end
+        end)
       end)
 
     {:ok, fragments}
+  end
+
+  @doc "List all registered parser modules."
+  @spec parsers() :: [module()]
+  def parsers, do: @registered_parsers
+
+  @doc "Find the parser module for a given filename."
+  @spec find_parser(String.t()) :: {:ok, module()} | :error
+  def find_parser(filename) do
+    Enum.find(parsers(), fn parser ->
+      matches_pattern?(filename, parser.file_pattern())
+    end)
+    |> case do
+      nil -> :error
+      parser -> {:ok, parser}
+    end
   end
 
   @doc "Compute SHA-256 hash of file content."
@@ -69,69 +89,21 @@ defmodule Cerno.Atomic.Parser do
     :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
   end
 
-  @doc """
-  Split markdown content by H2 headings into sections.
+  # Path.wildcard on Windows requires forward slashes
+  defp normalize_path(path), do: String.replace(path, "\\", "/")
 
-  Content before the first H2 heading is captured as a section with
-  heading `nil`. Each section includes its heading, content, and
-  line range.
-  """
-  @spec split_sections(String.t()) :: [map()]
-  def split_sections(content) do
-    lines = String.split(content, "\n")
+  defp matches_pattern?(filename, pattern) do
+    if String.contains?(pattern, ["*", "?", "["]) do
+      # Convert glob to regex: * → .*, ? → ., escape the rest
+      regex_str =
+        pattern
+        |> Regex.escape()
+        |> String.replace("\\*", ".*")
+        |> String.replace("\\?", ".")
 
-    {sections, current} =
-      lines
-      |> Enum.with_index(1)
-      |> Enum.reduce({[], nil}, fn {line, line_num}, {sections, current} ->
-        if h2_heading?(line) do
-          heading = extract_heading(line)
-          sections = if current, do: [finalize_section(current) | sections], else: sections
-          new_section = %{heading: heading, lines: [], line_start: line_num, line_end: line_num}
-          {sections, new_section}
-        else
-          if current do
-            current = %{current | lines: [line | current.lines], line_end: line_num}
-            {sections, current}
-          else
-            # Content before first heading
-            new_section = %{heading: nil, lines: [line], line_start: line_num, line_end: line_num}
-            {sections, new_section}
-          end
-        end
-      end)
-
-    sections = if current, do: [finalize_section(current) | sections], else: sections
-    Enum.reverse(sections)
-  end
-
-  defp h2_heading?(line), do: String.match?(line, ~r/^##\s+/)
-
-  defp extract_heading(line) do
-    line
-    |> String.replace(~r/^##\s+/, "")
-    |> String.trim()
-  end
-
-  defp finalize_section(section) do
-    content =
-      section.lines
-      |> Enum.reverse()
-      |> Enum.join("\n")
-      |> String.trim()
-
-    %{
-      heading: section.heading,
-      content: content,
-      line_start: section.line_start,
-      line_end: section.line_end
-    }
-  end
-
-  defp derive_project(path) do
-    path
-    |> Path.expand()
-    |> Path.dirname()
-    |> Path.basename()
+      Regex.match?(~r/^#{regex_str}$/, filename)
+    else
+      filename == pattern
+    end
   end
 end

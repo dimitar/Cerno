@@ -26,20 +26,35 @@ Atomic Memory ──accumulate──▶ Short-Term Memory ──distil──▶ 
 
 ### 1. Atomic Memory — `Cerno.Atomic`
 
-The working memory of a single project. Raw text extracted from `CLAUDE.md` files.
+The working memory of a single project. Raw text extracted from agent context files (`CLAUDE.md`, `.cursorrules`, etc.).
 
-**Key type: `Fragment`** — an in-memory struct (not persisted) representing one section of a `CLAUDE.md` file, split by H2 headings.
+**Key type: `Fragment`** — an in-memory struct (not persisted) representing one section of a context file.
 
 ```
 Fragment
 ├── id            deterministic SHA-256(source_path + content)
-├── content       raw markdown text of the section
-├── source_path   absolute path to the CLAUDE.md
+├── content       raw text of the section
+├── source_path   absolute path to the source file
 ├── source_project  project name derived from directory
-├── section_heading  H2 heading text (nil for preamble)
+├── section_heading  section heading text (nil for preamble)
 ├── line_range    {start_line, end_line}
 ├── file_hash     SHA-256 of the entire file
 └── extracted_at  UTC timestamp
+```
+
+**Parser architecture:** Pluggable via `Cerno.Atomic.Parser` behaviour. Each agent's context file format gets its own parser. The dispatcher routes files to the correct parser based on filename.
+
+```
+Cerno.Atomic.Parser (behaviour + dispatcher)
+├── parse/1           route file to correct parser by filename
+├── parse_directory/1 scan dir for all recognised file patterns
+├── find_parser/1     look up parser module for a filename
+├── file_pattern/0    callback — glob pattern this parser handles
+└── hash_file/1       SHA-256 utility
+
+Cerno.Atomic.Parser.ClaudeMd     CLAUDE.md → Fragments (split by H2 headings)
+(future) Parser.CursorRules      .cursorrules → Fragments
+(future) Parser.WindsurfRules    .windsurfrules → Fragments
 ```
 
 **Modules:**
@@ -47,7 +62,8 @@ Fragment
 | Module | Purpose | Status |
 |--------|---------|--------|
 | `Cerno.Atomic.Fragment` | Struct definition, deterministic ID generation | Complete |
-| `Cerno.Atomic.Parser` | `CLAUDE.md` → list of Fragments. Splits on H2 headings, tracks line ranges, supports recursive directory scanning | Complete |
+| `Cerno.Atomic.Parser` | Behaviour definition, dispatcher (routes by filename), directory scanning | Complete |
+| `Cerno.Atomic.Parser.ClaudeMd` | `CLAUDE.md` parser — splits on H2 headings, tracks line ranges | Complete |
 
 ### 2. Short-Term Memory — `Cerno.ShortTerm`
 
@@ -336,12 +352,12 @@ All tuneable parameters are in `config/config.exs`:
 
 ## Tests
 
-23 tests, 0 failures. All pure/unit tests — no database required.
+31 tests, 0 failures. All pure/unit tests — no database required.
 
 | Test file | Tests | Coverage |
 |-----------|-------|----------|
 | `fragment_test.exs` | 4 | Deterministic IDs, hex format, path/content sensitivity |
-| `parser_test.exs` | 10 | H2 splitting, line ranges, edge cases (no headings, empty), directory parsing, project derivation |
+| `parser_test.exs` | 18 | Dispatcher routing, `find_parser`, `parse_directory` across subdirs, ClaudeMd H2 splitting, line ranges, edge cases, project derivation |
 | `claude_test.exs` | 9 | Domain grouping, rank ordering, metadata toggle, empty input, output format |
 
 ---
@@ -391,7 +407,8 @@ All tuneable parameters are in `config/config.exs`:
 - [ ] Embedding mock for tests (Mox-based `Cerno.Embedding.Mock`)
 - [ ] Integration tests with Ecto sandbox (full accumulation pipeline)
 - [ ] ChatGPT formatter
-- [ ] Cursor formatter
+- [ ] Cursor formatter (`Parser.CursorRules` + `Formatter.Cursor`)
+- [ ] Windsurf parser (`Parser.WindsurfRules`)
 - [ ] Local embedding provider (Nx/Bumblebee)
 - [ ] Scheduled scan/reconciliation (periodic GenServer)
 - [ ] `cerno calibrate` command for tuning dedup thresholds per domain
