@@ -14,6 +14,12 @@ config :cerno, Cerno.API.Endpoint,
   http: [port: 4000],
   debug_errors: true
 
+# Relaxed promotion criteria for dev/testing
+config :cerno, :promotion,
+  min_confidence: 0.3,
+  min_observations: 1,
+  min_age_days: 0
+
 # Embedding: use Ollama locally (ollama pull nomic-embed-text)
 config :cerno, :embedding,
   provider: Cerno.Embedding.Ollama,
