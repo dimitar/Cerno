@@ -23,18 +23,21 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full details. See [docs/DESIGN.md](do
 ```
 lib/cerno/
 ├── atomic/           Fragment struct, Parser behaviour, ClaudeMd parser
-├── short_term/       Insight, InsightSource, Contradiction, Cluster schemas
+├── short_term/       Insight, InsightSource, Contradiction, Cluster, Classifier
 ├── long_term/        Principle, Derivation, PrincipleLink schemas
 ├── process/          Accumulator, Reconciler, Organiser, Resolver GenServers
-├── embedding/        Embedding behaviour, OpenAI provider, Pool, Cache
+├── embedding/        Embedding behaviour, OpenAI provider, Mock, Pool, Cache
+├── watcher/          FileWatcher (polling GenServer per project)
 ├── formatter/        Formatter behaviour, Claude formatter
 ├── application.ex    OTP supervision tree
 ├── repo.ex           Ecto Repo
+├── postgrex_types.ex Pgvector type registration
+├── accumulation_run.ex  Audit logging for scans
 ├── watched_project.ex
 └── cli.ex
 config/               Environment configs (dev, test, runtime)
 priv/repo/migrations/ Postgres schema (pgvector, HNSW indexes)
-test/                 ExUnit tests (23 passing)
+test/                 ExUnit tests (74 passing)
 ```
 
 ## Design Principles
@@ -52,7 +55,7 @@ test/                 ExUnit tests (23 passing)
 - **PubSub for coordination.** Processes communicate via Phoenix.PubSub topics, not direct calls.
 - **Ecto schemas with changesets.** All DB types use explicit changesets with validation. Enums via `Ecto.Enum`.
 - **Keep modules small.** One schema per file, one process per file.
-- **Tests don't need Postgres.** Pure logic tests use `async: true`. Integration tests (future) use Ecto sandbox.
+- **Tests don't need Postgres** for pure logic. DB-backed tests use Ecto sandbox with `Cerno.Embedding.Mock` for deterministic embeddings.
 
 ## Running
 
@@ -63,18 +66,13 @@ export PATH="/c/Program Files/Erlang OTP/bin:/c/Program Files/Erlang OTP/erts-16
 mix deps.get          # Fetch dependencies
 mix ecto.setup        # Create DB + run migrations (needs Postgres with pgvector)
 mix compile           # Compile (should be 0 warnings)
-mix test              # Run tests (31 passing)
+mix test              # Run tests (74 passing)
 ```
 
 **Database:** Postgres password is configured in `config/dev.exs` and `config/test.exs`.
 
 ## Current Phase
 
-Phase 1 (Foundation) is complete. Starting Phase 2 (Accumulation Pipeline):
-- Embedding computation and persistence during ingestion
-- Semantic dedup via HNSW similarity search
-- File hash comparison to skip unchanged files
-- Category/tag/domain classification
-- Contradiction detection during ingestion
-- Accumulation run audit logging
-- File watcher GenServer
+Phases 1 (Foundation) and 2 (Accumulation Pipeline) are complete. Next: Phase 3 (Reconciliation).
+
+Phase 2 delivered: full accumulation pipeline with file hash comparison, exact + semantic dedup (pgvector HNSW at 0.92 threshold), heuristic classification, contradiction detection (0.5–0.85 range), accumulation run audit logging, and polling file watcher with PubSub integration.

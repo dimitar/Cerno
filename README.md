@@ -89,7 +89,7 @@ git clone https://github.com/dimitar/Cerno.git
 cd Cerno
 mix deps.get
 mix ecto.setup    # Creates database and runs migrations
-mix test          # 31 tests, 0 failures
+mix test          # 74 tests, 0 failures
 ```
 
 ### CLI Usage
@@ -112,12 +112,12 @@ cerno organise                 # Trigger organisation
 
 ## Status
 
-Phase 1 (Foundation) complete. Phase 2 (Accumulation Pipeline) in progress.
+Phases 1–2 complete. Phase 3 (Reconciliation) next.
 
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1. Foundation | Project setup, data models, OTP tree, schema, CLI | Done |
-| 2. Accumulation | Embedding persistence, semantic dedup, contradiction detection | In Progress |
+| 2. Accumulation | Embedding persistence, semantic dedup, contradiction detection, file watcher | Done |
 | 3. Reconciliation | Clustering, cross-cluster dedup, confidence adjustment | Planned |
 | 4. Organisation | Insight → Principle promotion, ranking, pruning | Planned |
 | 5. Resolution | Principle retrieval, context-aware injection | Planned |
