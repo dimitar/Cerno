@@ -13,4 +13,10 @@ config :cerno, :embedding,
   provider: Cerno.Embedding.Mock,
   dimension: 1536
 
+# Relaxed promotion criteria for tests
+config :cerno, :promotion,
+  min_confidence: 0.5,
+  min_observations: 1,
+  min_age_days: 0
+
 config :logger, level: :warning
