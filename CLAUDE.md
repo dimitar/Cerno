@@ -24,7 +24,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full details. See [docs/DESIGN.md](do
 lib/cerno/
 ├── atomic/           Fragment struct, Parser behaviour, ClaudeMd parser
 ├── short_term/       Insight, InsightSource, Contradiction, Cluster, Classifier, Clusterer, Confidence
-├── long_term/        Principle, Derivation, PrincipleLink, Promoter, Linker, Lifecycle
+├── long_term/        Principle, Derivation, PrincipleLink, Promoter, Linker, Lifecycle, Retriever
 ├── process/          Accumulator, Reconciler, Organiser, Resolver GenServers
 ├── embedding/        Embedding behaviour, OpenAI provider, Mock, Pool, Cache
 ├── watcher/          FileWatcher (polling GenServer per project)
@@ -33,11 +33,12 @@ lib/cerno/
 ├── repo.ex           Ecto Repo
 ├── postgrex_types.ex Pgvector type registration
 ├── accumulation_run.ex  Audit logging for scans
+├── resolution_run.ex    Audit logging for resolutions
 ├── watched_project.ex
 └── cli.ex
 config/               Environment configs (dev, test, runtime)
 priv/repo/migrations/ Postgres schema (pgvector, HNSW indexes)
-test/                 ExUnit tests (135 passing)
+test/                 ExUnit tests (164 passing)
 ```
 
 ## Design Principles
@@ -66,13 +67,13 @@ export PATH="/c/Program Files/Erlang OTP/bin:/c/Program Files/Erlang OTP/erts-16
 mix deps.get          # Fetch dependencies
 mix ecto.setup        # Create DB + run migrations (needs Postgres with pgvector)
 mix compile           # Compile (should be 0 warnings)
-mix test              # Run tests (135 passing)
+mix test              # Run tests (164 passing)
 ```
 
 **Database:** Postgres password is configured in `config/dev.exs` and `config/test.exs`.
 
 ## Current Phase
 
-Phases 1 (Foundation), 2 (Accumulation Pipeline), 3 (Reconciliation), and 4 (Organisation) are complete. Next: Phase 5 (Resolution).
+Phases 1 (Foundation), 2 (Accumulation Pipeline), 3 (Reconciliation), 4 (Organisation), and 5 (Resolution) are complete. Next: Phase 6 (Polish).
 
-Phase 4 delivered: insight-to-principle promotion with exact + semantic dedup (Promoter), principle relationship detection with typed links — reinforces, related, contradicts, generalizes/specializes (Linker), exponential recency decay with frequency-adjusted half-life, rank recomputation with link counts, pruning lifecycle active → decaying → pruned (Lifecycle), and full Organiser GenServer wiring.
+Phase 5 delivered: principle retrieval with hybrid scoring — 50% semantic similarity + 30% rank + 20% domain match (Retriever), already-represented filtering against file section embeddings (threshold 0.85), conflict detection with negation heuristic and `[CONFLICT]` markers, resolution audit logging (ResolutionRun), and full Resolver GenServer wiring with file injection that preserves human content.

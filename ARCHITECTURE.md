@@ -153,6 +153,7 @@ Principle (Postgres: principles)
 | `Cerno.LongTerm.Promoter` | Insight-to-principle promotion with exact + semantic dedup, category mapping, `promote_eligible/0` | Complete |
 | `Cerno.LongTerm.Linker` | Typed link detection between principles (reinforces, related, contradicts, generalizes/specializes), `detect_links/0` | Complete |
 | `Cerno.LongTerm.Lifecycle` | Exponential recency decay, rank recomputation with link counts, pruning lifecycle, `run/0` | Complete |
+| `Cerno.LongTerm.Retriever` | Hybrid principle retrieval (semantic + rank + domain), domain detection, already-represented filtering, conflict detection | Complete |
 
 ---
 
@@ -208,20 +209,18 @@ Promotes insights to principles (short-term → long-term). Auto-triggered after
 
 ### Resolver — `Cerno.Process.Resolver`
 
-Drives the downward flow from long-term memory back into `CLAUDE.md` files.
+Drives the downward flow from long-term memory back into `CLAUDE.md` files. Full pipeline implemented.
 
 **Current implementation:**
-- File I/O: reads target `CLAUDE.md`, replaces or appends the `## Resolved Knowledge from Cerno` section (never overwrites human content)
-- Formatter integration: delegates to pluggable formatter (default: Claude)
+1. Start `ResolutionRun` audit log
+2. Read current file content for domain detection and filtering
+3. Retrieve relevant principles via `Retriever.retrieve_for_file/2` — hybrid scoring: 50% semantic similarity + 30% rank + 20% domain match
+4. Embed file sections via `Retriever.embed_file_sections/1`, filter already-represented (similarity >= 0.85)
+5. Detect conflicts via negation heuristic — conflicting principles get `[CONFLICT]` prefix
+6. Format via pluggable formatter (default: Claude) — groups by domain, sorts by rank
+7. Complete audit log with principles_resolved and conflicts_detected counts
+8. Inject into `## Resolved Knowledge from Cerno` section (replace existing or append) — never overwrites human content
 - Dry-run mode: returns formatted text without writing
-- Currently resolves with an empty principles list (retrieval not implemented)
-
-**Planned implementation (Phase 5):**
-1. Parse current `CLAUDE.md` and compute embeddings for existing content
-2. Retrieve relevant principles: 50% semantic similarity + 30% rank + 20% domain match
-3. Filter out already-represented principles, flag contradictions with `[CONFLICT]` markers
-4. Format per agent type via pluggable formatter
-5. Inject into dedicated section
 
 ---
 
@@ -297,6 +296,12 @@ Tracks each accumulation scan. Fields: project_path, status (running/completed/f
 
 Convenience functions: `start/1`, `complete/2`, `fail/2`.
 
+### ResolutionRun — `Cerno.ResolutionRun`
+
+Tracks each resolution operation. Fields: target_path, agent_type, status (running/completed/failed), principles_resolved, conflicts_detected, started_at, completed_at.
+
+Convenience functions: `start/2`, `complete/2`, `fail/1`.
+
 ---
 
 ## OTP Supervision Tree
@@ -314,7 +319,7 @@ Cerno.Application (one_for_one)
 ├── Cerno.Process.Accumulator                Files → Short-Term (full pipeline)
 ├── Cerno.Process.Reconciler                 Short-Term reconciliation (full pipeline)
 ├── Cerno.Process.Organiser                  Short-Term → Long-Term (full pipeline)
-└── Cerno.Process.Resolver                   Long-Term → Files (partial)
+└── Cerno.Process.Resolver                   Long-Term → Files (full pipeline)
 ```
 
 ---
@@ -359,7 +364,7 @@ Escript-based command interface. All commands dispatch to the appropriate GenSer
 |---------|-------------|--------|
 | `cerno init <path>` | Register a project as a `WatchedProject` | Working |
 | `cerno scan [<path>]` | Trigger accumulation for one or all projects | Working |
-| `cerno resolve <path> [--dry-run]` | Resolve principles into a `CLAUDE.md` | Working (empty output — no principles yet) |
+| `cerno resolve <path> [--dry-run]` | Resolve principles into a `CLAUDE.md` | Working |
 | `cerno status` | Show watched project count | Working |
 | `cerno insights` | List top 20 active insights by confidence | Working |
 | `cerno principles` | List top 20 active principles by rank | Working |
@@ -398,7 +403,7 @@ All tuneable parameters are in `config/config.exs`:
 
 ## Tests
 
-135 tests, 0 failures. Mix of pure/unit tests and database-backed tests with Ecto sandbox.
+164 tests, 0 failures. Mix of pure/unit tests and database-backed tests with Ecto sandbox.
 
 | Test file | Tests | Coverage |
 |-----------|-------|----------|
@@ -416,6 +421,9 @@ All tuneable parameters are in `config/config.exs`:
 | `linker_test.exs` | 5 | Link detection by similarity, classification (reinforces, related, contradicts), direction normalization, no duplicate links |
 | `lifecycle_test.exs` | 7 | Decay (recent vs stale), rank recomputation (with link count), pruning (rank + age thresholds), full run/0 pipeline |
 | `organiser_test.exs` | 2 | Full pipeline (promote → link → lifecycle), empty pipeline (no insights) |
+| `retriever_test.exs` | 17 | Domain detection, hybrid scoring, min_score/max_principles filtering, already-represented filtering, conflict detection, section embedding |
+| `resolution_run_test.exs` | 6 | Start/complete/fail lifecycle, custom agent type, changeset validation |
+| `resolver_test.exs` | 6 | Dry-run output, principle inclusion, empty principles, audit log creation, file write, content preservation |
 
 ---
 
@@ -441,14 +449,15 @@ All tuneable parameters are in `config/config.exs`:
 - [x] Pruning lifecycle: active → decaying (rank < 0.15, stale > 90d) → pruned (rank < 0.10, stale > 180d) (`Lifecycle.apply_pruning/0`)
 - [x] Full Organiser GenServer wiring with PubSub integration
 
-### Phase 5: Resolution
+### ~~Phase 5: Resolution~~ — Complete
 
-- [ ] Parse target `CLAUDE.md`, compute embeddings for existing sections
-- [ ] Retrieve relevant principles: hybrid scoring (50% semantic + 30% rank + 20% domain)
-- [ ] Filter already-represented principles
-- [ ] Contradiction detection between resolved principles and existing content
-- [ ] `[CONFLICT]` markers for contradictions
-- [ ] Resolution run audit logging (`resolution_runs` table)
+- [x] Principle retrieval with hybrid scoring: 50% semantic + 30% rank + 20% domain (`Retriever.retrieve_for_file/2`)
+- [x] Domain detection via paragraph-level heuristic classification (`Retriever.detect_file_domains/1`)
+- [x] File section embedding for already-represented filtering (`Retriever.embed_file_sections/1`)
+- [x] Already-represented filtering at 0.85 similarity threshold (`Retriever.filter_already_represented/3`)
+- [x] Conflict detection with negation heuristic and `[CONFLICT]` markers
+- [x] Resolution run audit logging (`ResolutionRun` schema)
+- [x] Full Resolver GenServer wiring with file injection that preserves human content
 
 ### Phase 6: Polish & Extension
 
