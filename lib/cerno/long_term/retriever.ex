@@ -10,7 +10,7 @@ defmodule Cerno.LongTerm.Retriever do
   require Logger
 
   alias Cerno.LongTerm.Principle
-  alias Cerno.ShortTerm.Classifier
+  alias Cerno.ShortTerm.{Classifier, Clusterer}
   alias Cerno.Repo
 
   @max_content_chars 8000
@@ -74,7 +74,118 @@ defmodule Cerno.LongTerm.Retriever do
     |> Enum.map(fn {domain, _count} -> domain end)
   end
 
+  @negation_pairs [
+    {"always", "never"},
+    {"do", "don't"},
+    {"use", "avoid"},
+    {"should", "should not"},
+    {"prefer", "avoid"},
+    {"must", "must not"},
+    {"enable", "disable"}
+  ]
+
+  @doc """
+  Filter out principles already represented in the file content.
+
+  For each principle, compares its embedding against section embeddings:
+  - Similarity >= threshold → filtered out (already represented)
+  - Similarity in 0.5–0.7 + negation heuristic → kept but marked as conflict
+
+  Returns `{kept, conflicts}` where conflicts are `{principle, :conflict}` tuples.
+  """
+  @spec filter_already_represented([{%Principle{}, float()}], [[float()]], keyword()) ::
+          {[{%Principle{}, float()}], [{%Principle{}, float()}]}
+  def filter_already_represented(scored_principles, section_embeddings, opts \\ []) do
+    config = resolution_config()
+    threshold = Keyword.get(opts, :already_represented_threshold, config[:already_represented_threshold])
+
+    {kept, conflicts} =
+      Enum.reduce(scored_principles, {[], []}, fn {principle, score}, {kept_acc, conflict_acc} ->
+        principle_emb = to_list(principle.embedding)
+
+        if is_nil(principle_emb) do
+          {[{principle, score} | kept_acc], conflict_acc}
+        else
+          max_similarity = max_section_similarity(principle_emb, section_embeddings)
+
+          cond do
+            max_similarity >= threshold ->
+              # Already represented — filter out
+              {kept_acc, conflict_acc}
+
+            is_conflict?(principle, section_embeddings) ->
+              {kept_acc, [{principle, score} | conflict_acc]}
+
+            true ->
+              {[{principle, score} | kept_acc], conflict_acc}
+          end
+        end
+      end)
+
+    {Enum.reverse(kept), Enum.reverse(conflicts)}
+  end
+
+  @doc """
+  Embed file sections for already-represented filtering.
+
+  Splits content by H2 headings (or double newlines), embeds each section.
+  Returns list of embedding vectors.
+  """
+  @spec embed_file_sections(String.t()) :: {:ok, [[float()]]} | {:error, term()}
+  def embed_file_sections(content) do
+    sections =
+      content
+      |> String.split(~r/(\r?\n)(?=## )/)
+      |> Enum.reject(&(String.trim(&1) == ""))
+
+    if Enum.empty?(sections) do
+      {:ok, []}
+    else
+      provider = Application.get_env(:cerno, :embedding)[:provider]
+
+      truncated = Enum.map(sections, &String.slice(&1, 0, @max_content_chars))
+
+      case provider.embed_batch(truncated) do
+        {:ok, embeddings} -> {:ok, embeddings}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
   # --- Private ---
+
+  defp max_section_similarity(_principle_emb, []), do: 0.0
+
+  defp max_section_similarity(principle_emb, section_embeddings) do
+    section_embeddings
+    |> Enum.map(&Clusterer.cosine_similarity(principle_emb, &1))
+    |> Enum.max()
+  end
+
+  defp is_conflict?(principle, section_embeddings) do
+    principle_emb = to_list(principle.embedding)
+    principle_lower = String.downcase(principle.content)
+
+    Enum.any?(section_embeddings, fn section_emb ->
+      sim = Clusterer.cosine_similarity(principle_emb, section_emb)
+
+      sim >= 0.5 and sim <= 0.7 and has_negation?(principle_lower)
+    end)
+  end
+
+  defp has_negation?(text) do
+    Enum.any?(@negation_pairs, fn {pos, neg} ->
+      String.contains?(text, pos) or String.contains?(text, neg)
+    end)
+  end
+
+  defp to_list(nil), do: nil
+  defp to_list(embedding) when is_list(embedding), do: embedding
+  defp to_list(%Pgvector{} = vec), do: Pgvector.to_list(vec)
+
+  defp to_list(embedding) do
+    if is_struct(embedding), do: Pgvector.to_list(embedding), else: embedding
+  end
 
   defp score_principles_hybrid(embedding, file_domains, config) do
     semantic_weight = config[:semantic_weight]

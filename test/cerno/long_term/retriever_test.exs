@@ -154,4 +154,91 @@ defmodule Cerno.LongTerm.RetrieverTest do
       end
     end
   end
+
+  describe "filter_already_represented/3" do
+    test "filters out principles whose content matches file sections" do
+      # Create a principle and embed the same content as a "file section"
+      content = "Always use pattern matching in Elixir"
+      p = insert_principle(%{content: content, rank: 0.8})
+
+      # The file section has the same embedding as the principle
+      section_embedding = Cerno.Embedding.Mock.deterministic_embedding(content)
+
+      scored = [{p, 0.7}]
+      {kept, _conflicts} = Retriever.filter_already_represented(scored, [section_embedding])
+
+      # Should be filtered out because the principle is already represented
+      assert kept == []
+    end
+
+    test "keeps principles not represented in file sections" do
+      p = insert_principle(%{content: "Use supervision trees in OTP", rank: 0.8})
+
+      # File section has completely different content
+      section_embedding = Cerno.Embedding.Mock.deterministic_embedding("JavaScript React components")
+
+      scored = [{p, 0.7}]
+      {kept, _conflicts} = Retriever.filter_already_represented(scored, [section_embedding])
+
+      assert length(kept) == 1
+      assert {^p, 0.7} = hd(kept)
+    end
+
+    test "returns empty conflicts when no contradictions found" do
+      p = insert_principle(%{content: "Use supervision trees", rank: 0.8})
+
+      section_embedding = Cerno.Embedding.Mock.deterministic_embedding("Completely different content")
+
+      scored = [{p, 0.7}]
+      {_kept, conflicts} = Retriever.filter_already_represented(scored, [section_embedding])
+
+      assert conflicts == []
+    end
+
+    test "handles empty section embeddings" do
+      p = insert_principle(%{content: "Some principle", rank: 0.5})
+
+      scored = [{p, 0.6}]
+      {kept, conflicts} = Retriever.filter_already_represented(scored, [])
+
+      assert length(kept) == 1
+      assert conflicts == []
+    end
+
+    test "handles empty scored principles" do
+      section_embedding = Cerno.Embedding.Mock.deterministic_embedding("Some content")
+
+      {kept, conflicts} = Retriever.filter_already_represented([], [section_embedding])
+
+      assert kept == []
+      assert conflicts == []
+    end
+  end
+
+  describe "embed_file_sections/1" do
+    test "embeds sections split by H2 headings" do
+      content = """
+      ## Section One
+
+      Some content here.
+
+      ## Section Two
+
+      More content here.
+      """
+
+      {:ok, embeddings} = Retriever.embed_file_sections(content)
+      assert length(embeddings) >= 2
+
+      Enum.each(embeddings, fn emb ->
+        assert is_list(emb)
+        assert length(emb) == 1536
+      end)
+    end
+
+    test "returns empty list for empty content" do
+      {:ok, embeddings} = Retriever.embed_file_sections("")
+      assert embeddings == []
+    end
+  end
 end
