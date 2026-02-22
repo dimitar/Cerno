@@ -150,6 +150,9 @@ Principle (Postgres: principles)
 | `Cerno.LongTerm.Principle` | Ecto schema, changeset, `compute_rank/2` with configurable weights | Complete |
 | `Cerno.LongTerm.Derivation` | Ecto schema, changeset | Complete |
 | `Cerno.LongTerm.PrincipleLink` | Ecto schema, changeset | Complete |
+| `Cerno.LongTerm.Promoter` | Insight-to-principle promotion with exact + semantic dedup, category mapping, `promote_eligible/0` | Complete |
+| `Cerno.LongTerm.Linker` | Typed link detection between principles (reinforces, related, contradicts, generalizes/specializes), `detect_links/0` | Complete |
+| `Cerno.LongTerm.Lifecycle` | Exponential recency decay, rank recomputation with link counts, pruning lifecycle, `run/0` | Complete |
 
 ---
 
@@ -198,14 +201,10 @@ Runs reconciliation within the short-term layer. Auto-triggered after accumulati
 
 Promotes insights to principles (short-term → long-term). Auto-triggered after reconciliation completes.
 
-**Current implementation:** Framework only — same pattern as Reconciler.
-
-**Planned implementation (Phase 4):**
-1. Distil: single insight promotes directly; insight clusters get LLM-synthesized into a principle
-2. Dedup against existing principles (content hash, then embedding similarity)
-3. Link detection and classification (reinforces, generalizes, etc.)
-4. Rank computation via `Principle.compute_rank/2`
-5. Pruning lifecycle: active → decaying (rank < 0.15, stale > 90d) → pruned (rank < 0.10, stale > 180d)
+**Current implementation:**
+1. Promote eligible insights via `Promoter.promote_eligible/0` — queries insights meeting promotion criteria, deduplicates against existing principles (exact content_hash match, then semantic similarity >= 0.92), creates Principle + Derivation records. Category mapping: convention→heuristic, technique→learning, warning→anti_pattern, etc.
+2. Detect links via `Linker.detect_links/0` — for each active principle, finds others with similarity > 0.5. Classifies: >0.85 → reinforces, 0.7–0.85 + same domain → related, 0.5–0.7 + negation → contradicts, shared tags + different domains → generalizes/specializes
+3. Lifecycle via `Lifecycle.run/0` — exponential recency decay with frequency-adjusted half-life (`2^(-days / (half_life / (1 + log(freq))))`), rank recomputation via `Principle.compute_rank/2` with current link counts, pruning (rank < 0.15 + stale 90d → decaying, rank < 0.10 + stale 180d → pruned)
 
 ### Resolver — `Cerno.Process.Resolver`
 
@@ -314,7 +313,7 @@ Cerno.Application (one_for_one)
 ├── Task.Supervisor (Cerno.Process.TaskSupervisor)  Async work within processes
 ├── Cerno.Process.Accumulator                Files → Short-Term (full pipeline)
 ├── Cerno.Process.Reconciler                 Short-Term reconciliation (full pipeline)
-├── Cerno.Process.Organiser                  Short-Term → Long-Term (stub)
+├── Cerno.Process.Organiser                  Short-Term → Long-Term (full pipeline)
 └── Cerno.Process.Resolver                   Long-Term → Files (partial)
 ```
 
@@ -364,8 +363,8 @@ Escript-based command interface. All commands dispatch to the appropriate GenSer
 | `cerno status` | Show watched project count | Working |
 | `cerno insights` | List top 20 active insights by confidence | Working |
 | `cerno principles` | List top 20 active principles by rank | Working |
-| `cerno reconcile` | Trigger reconciliation | Working (stub process) |
-| `cerno organise` | Trigger organisation | Working (stub process) |
+| `cerno reconcile` | Trigger reconciliation | Working |
+| `cerno organise` | Trigger organisation | Working |
 | `cerno daemon start\|stop\|status` | Background daemon management | Not implemented |
 
 ---
@@ -399,7 +398,7 @@ All tuneable parameters are in `config/config.exs`:
 
 ## Tests
 
-114 tests, 0 failures. Mix of pure/unit tests and database-backed tests with Ecto sandbox.
+135 tests, 0 failures. Mix of pure/unit tests and database-backed tests with Ecto sandbox.
 
 | Test file | Tests | Coverage |
 |-----------|-------|----------|
@@ -413,6 +412,10 @@ All tuneable parameters are in `config/config.exs`:
 | `clusterer_test.exs` | 19 | Cosine similarity math, connected components (BFS), cluster_insights with DB, persist/rebuild, intra-cluster dedup (merge + supersede), cross-cluster contradiction scan |
 | `confidence_test.exs` | 15 | Multi-project boost, stale decay, contradiction penalty, observation floor, clamping, adjust_all lifecycle, distinct_project_count, has_unresolved_contradictions |
 | `reconciler_test.exs` | 6 | Promotion candidates (criteria filtering, exclusions), full pipeline integration (PubSub broadcast, cluster creation) |
+| `promoter_test.exs` | 7 | Exact dedup, semantic dedup, category mapping, promote_eligible pipeline, re-promotion skip |
+| `linker_test.exs` | 5 | Link detection by similarity, classification (reinforces, related, contradicts), direction normalization, no duplicate links |
+| `lifecycle_test.exs` | 7 | Decay (recent vs stale), rank recomputation (with link count), pruning (rank + age thresholds), full run/0 pipeline |
+| `organiser_test.exs` | 2 | Full pipeline (promote → link → lifecycle), empty pipeline (no insights) |
 
 ---
 
@@ -427,14 +430,16 @@ All tuneable parameters are in `config/config.exs`:
 - [x] Promotion candidate flagging (configurable via `:cerno, :promotion`)
 - [x] Full Reconciler GenServer wiring with PubSub integration
 
-### Phase 4: Organisation & Long-Term
+### ~~Phase 4: Organisation~~ — Complete
 
-- [ ] Insight → Principle promotion (single insight direct, cluster LLM-synthesized)
-- [ ] Principle dedup (content hash then embedding)
-- [ ] Link detection and classification between principles
-- [ ] Rank computation via `Principle.compute_rank/2`
-- [ ] Pruning lifecycle: active → decaying (rank < 0.15, stale > 90d) → pruned (rank < 0.10, stale > 180d)
-- [ ] Decay formula: `effective_lambda = lambda / (1 + log(frequency))`
+- [x] Insight → Principle promotion with exact + semantic dedup (`Promoter.promote_eligible/0`)
+- [x] Category mapping: convention→heuristic, technique→learning, warning→anti_pattern, etc.
+- [x] Link detection and classification between principles (`Linker.detect_links/0`)
+- [x] Link types: reinforces (>0.85), related (0.7–0.85 + same domain), contradicts (0.5–0.7 + negation), generalizes/specializes (shared tags + different domains)
+- [x] Exponential recency decay with frequency-adjusted half-life (`Lifecycle.apply_decay/0`)
+- [x] Rank recomputation via `Principle.compute_rank/2` with link counts (`Lifecycle.recompute_ranks/0`)
+- [x] Pruning lifecycle: active → decaying (rank < 0.15, stale > 90d) → pruned (rank < 0.10, stale > 180d) (`Lifecycle.apply_pruning/0`)
+- [x] Full Organiser GenServer wiring with PubSub integration
 
 ### Phase 5: Resolution
 

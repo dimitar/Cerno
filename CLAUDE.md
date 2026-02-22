@@ -24,7 +24,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full details. See [docs/DESIGN.md](do
 lib/cerno/
 ├── atomic/           Fragment struct, Parser behaviour, ClaudeMd parser
 ├── short_term/       Insight, InsightSource, Contradiction, Cluster, Classifier, Clusterer, Confidence
-├── long_term/        Principle, Derivation, PrincipleLink schemas
+├── long_term/        Principle, Derivation, PrincipleLink, Promoter, Linker, Lifecycle
 ├── process/          Accumulator, Reconciler, Organiser, Resolver GenServers
 ├── embedding/        Embedding behaviour, OpenAI provider, Mock, Pool, Cache
 ├── watcher/          FileWatcher (polling GenServer per project)
@@ -37,7 +37,7 @@ lib/cerno/
 └── cli.ex
 config/               Environment configs (dev, test, runtime)
 priv/repo/migrations/ Postgres schema (pgvector, HNSW indexes)
-test/                 ExUnit tests (114 passing)
+test/                 ExUnit tests (135 passing)
 ```
 
 ## Design Principles
@@ -66,13 +66,13 @@ export PATH="/c/Program Files/Erlang OTP/bin:/c/Program Files/Erlang OTP/erts-16
 mix deps.get          # Fetch dependencies
 mix ecto.setup        # Create DB + run migrations (needs Postgres with pgvector)
 mix compile           # Compile (should be 0 warnings)
-mix test              # Run tests (114 passing)
+mix test              # Run tests (135 passing)
 ```
 
 **Database:** Postgres password is configured in `config/dev.exs` and `config/test.exs`.
 
 ## Current Phase
 
-Phases 1 (Foundation), 2 (Accumulation Pipeline), and 3 (Reconciliation) are complete. Next: Phase 4 (Organisation).
+Phases 1 (Foundation), 2 (Accumulation Pipeline), 3 (Reconciliation), and 4 (Organisation) are complete. Next: Phase 5 (Resolution).
 
-Phase 3 delivered: connected-component clustering via BFS on embedding similarity graphs (threshold 0.88), intra-cluster deduplication (merge near-duplicates, winner absorbs loser's counts), cross-cluster contradiction scanning with negation heuristics ("always"↔"never", "use"↔"avoid", etc.), confidence adjustment pipeline (multi-project boost +0.05/project, stale decay ×0.9 after 90d, contradiction penalty ×0.8, observation floor via log scale), promotion candidate identification, and full Reconciler GenServer wiring with PubSub integration.
+Phase 4 delivered: insight-to-principle promotion with exact + semantic dedup (Promoter), principle relationship detection with typed links — reinforces, related, contradicts, generalizes/specializes (Linker), exponential recency decay with frequency-adjusted half-life, rank recomputation with link counts, pruning lifecycle active → decaying → pruned (Lifecycle), and full Organiser GenServer wiring.
