@@ -3,15 +3,15 @@ defmodule Cerno.Process.Organiser do
   GenServer that runs the organisation process (Short-Term → Long-Term).
 
   Organisation steps:
-  1. Distil: single insight promotes directly; clusters get LLM-synthesized
-  2. Dedup against existing principles (hash then embedding)
-  3. Link detection and classification
-  4. Rank computation
-  5. Pruning: active → decaying → pruned lifecycle
+  1. Promote eligible insights to principles (with exact + semantic dedup)
+  2. Detect links between principles
+  3. Lifecycle: decay recency, recompute ranks, prune stale principles
   """
 
   use GenServer
   require Logger
+
+  alias Cerno.LongTerm.{Promoter, Linker, Lifecycle}
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -62,7 +62,18 @@ defmodule Cerno.Process.Organiser do
 
   defp run_organisation do
     Logger.info("Starting organisation")
-    # Phase 4 implementation: promotion, dedup, linking, ranking, pruning
+
+    # Step 1: Promote eligible insights to principles
+    {:ok, promo_stats} = Promoter.promote_eligible()
+    Logger.info("Promotion: #{promo_stats.promoted} promoted, #{promo_stats.skipped_exact} exact dupes, #{promo_stats.skipped_semantic} semantic dupes")
+
+    # Step 2: Detect links between principles
+    {:ok, link_count} = Linker.detect_links()
+    Logger.info("Links: #{link_count} new links created")
+
+    # Step 3: Lifecycle (decay + rank + prune)
+    Lifecycle.run()
+
     Logger.info("Organisation complete")
   end
 end
