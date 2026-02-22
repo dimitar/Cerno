@@ -19,6 +19,7 @@ defmodule Cerno.Process.Accumulator do
 
   alias Cerno.Atomic.Parser
   alias Cerno.ShortTerm.{Insight, InsightSource, Contradiction, Classifier}
+  alias Cerno.LLM.ClaudeCli
   alias Cerno.Embedding.Pool, as: EmbeddingPool
   alias Cerno.{AccumulationRun, WatchedProject, Repo}
 
@@ -114,7 +115,8 @@ defmodule Cerno.Process.Accumulator do
       {:changed, file_hash} ->
         case Parser.parse(path) do
           {:ok, fragments} ->
-            stats = ingest_fragments(fragments)
+            learnings = distill_fragments(path, fragments)
+            stats = ingest_learnings(learnings, fragments)
 
             update_watched_project(path, file_hash)
             AccumulationRun.complete(run, Map.put(stats, :fragments_found, length(fragments)))
@@ -166,9 +168,60 @@ defmodule Cerno.Process.Accumulator do
     end
   end
 
-  defp ingest_fragments(fragments) do
-    Enum.reduce(fragments, %{insights_created: 0, insights_updated: 0}, fn fragment, stats ->
-      case ingest_fragment(fragment) do
+  # --- LLM distillation (file-level) ---
+
+  defp distill_fragments(path, fragments) do
+    if claude_md_source?(path) do
+      case ClaudeCli.evaluate_file(fragments) do
+        {:ok, learnings} ->
+          Logger.info("LLM extracted #{length(learnings)} learnings from #{path}")
+          learnings
+
+        {:error, reason} ->
+          Logger.warning("LLM distillation failed (#{inspect(reason)}), falling back to heuristic")
+          heuristic_learnings(fragments)
+      end
+    else
+      heuristic_learnings(fragments)
+    end
+  end
+
+  defp heuristic_learnings(fragments) do
+    Enum.map(fragments, fn fragment ->
+      classification = Classifier.classify(fragment)
+
+      %{
+        content: fragment.content,
+        category: classification.category,
+        tags: classification.tags,
+        domain: classification.domain,
+        source_sections: if(fragment.section_heading, do: [fragment.section_heading], else: [])
+      }
+    end)
+  end
+
+  defp claude_md_source?(path) when is_binary(path) do
+    basename = Path.basename(path) |> String.downcase()
+    basename == "claude.md"
+  end
+
+  defp claude_md_source?(_), do: false
+
+  # --- Ingestion ---
+
+  defp ingest_learnings(learnings, fragments) do
+    # Build a lookup from section heading to fragment for InsightSource linking
+    fragment_lookup =
+      fragments
+      |> Enum.map(fn f -> {f.section_heading, f} end)
+      |> Enum.into(%{})
+
+    first_fragment = List.first(fragments)
+
+    Enum.reduce(learnings, %{insights_created: 0, insights_updated: 0}, fn learning, stats ->
+      source_fragment = find_source_fragment(learning, fragment_lookup, first_fragment)
+
+      case ingest_learning(learning, source_fragment) do
         :created -> %{stats | insights_created: stats.insights_created + 1}
         :updated -> %{stats | insights_updated: stats.insights_updated + 1}
         :error -> stats
@@ -176,30 +229,34 @@ defmodule Cerno.Process.Accumulator do
     end)
   end
 
-  defp ingest_fragment(fragment) do
-    content_hash = Insight.hash_content(fragment.content)
+  defp find_source_fragment(learning, fragment_lookup, fallback) do
+    source_sections = Map.get(learning, :source_sections, [])
 
-    # Step 1: Exact dedup by content hash
+    Enum.find_value(source_sections, fallback, fn heading ->
+      Map.get(fragment_lookup, heading)
+    end)
+  end
+
+  defp ingest_learning(learning, fragment) do
+    content = learning.content
+    content_hash = Insight.hash_content(content)
+
     case Repo.get_by(Insight, content_hash: content_hash) do
       nil ->
-        # Step 2: Try to get embedding
-        case get_embedding(fragment.content) do
+        case get_embedding(content) do
           {:ok, embedding} ->
-            # Step 3: Semantic dedup
             case find_semantic_match(embedding) do
               {:match, existing} ->
                 merge_into_existing(existing, fragment, embedding)
                 :updated
 
               :no_match ->
-                # Step 4: Create new insight with classification
-                create_new_insight(fragment, content_hash, embedding)
+                insert_insight(fragment, content_hash, embedding, learning)
             end
 
           {:error, reason} ->
-            # Create without embedding (embedding service may be down)
             Logger.warning("Embedding failed: #{inspect(reason)}, creating without embedding")
-            create_new_insight(fragment, content_hash, nil)
+            insert_insight(fragment, content_hash, nil, learning)
         end
 
       existing ->
@@ -239,17 +296,16 @@ defmodule Cerno.Process.Accumulator do
     create_source(existing, fragment)
   end
 
-  defp create_new_insight(fragment, content_hash, embedding) do
+  defp insert_insight(fragment, content_hash, embedding, learning) do
     now = DateTime.utc_now()
-    classification = Classifier.classify(fragment)
 
     attrs = %{
-      content: fragment.content,
+      content: learning.content,
       content_hash: content_hash,
       embedding: embedding,
-      category: classification.category,
-      tags: classification.tags,
-      domain: classification.domain,
+      category: learning.category,
+      tags: learning.tags,
+      domain: learning.domain,
       confidence: 0.5,
       observation_count: 1,
       first_seen_at: now,
@@ -261,10 +317,10 @@ defmodule Cerno.Process.Accumulator do
       {:ok, insight} ->
         create_source(insight, fragment)
 
-        # Step 5: Check for contradictions
+        # Check for contradictions
         if embedding, do: check_contradictions(insight, embedding)
 
-        Logger.debug("Created insight #{insight.id} [#{classification.category}]")
+        Logger.debug("Created insight #{insight.id} [#{learning.category}]")
         :created
 
       {:error, changeset} ->
