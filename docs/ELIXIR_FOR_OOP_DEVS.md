@@ -86,7 +86,7 @@ state = %{state | processing: MapSet.put(state.processing, path)}
 
 This is the single biggest mental shift. Pattern matching is used **everywhere**: function heads, `case`, `with`, and plain `=`.
 
-### Multiple function clauses (like method overloading, but on values)
+### Multiple versions of the same function (like method overloading, but matching on values)
 
 ```csharp
 // C#
@@ -165,7 +165,7 @@ results =
   |> Enum.take(max_principles)
 ```
 
-Read it top to bottom: start with `scored`, filter it, sort it, take N. The `_p` prefix means "I need to acknowledge this variable in the pattern but I'm not using it."
+Read it top to bottom: start with `scored`, filter it, sort it, take N. The `_p` prefix means "this variable exists in the pattern but I don't actually use it" — the underscore tells Elixir (and other developers) to ignore it.
 
 A longer pipeline from the domain detection logic:
 
@@ -385,7 +385,7 @@ The provider module is loaded from a config file. `provider().embed(text)` calls
 
 ## 9. Ecto — The ORM That Isn't
 
-Ecto looks like Entity Framework or Hibernate, but it's fundamentally different: there's no lazy loading, no change tracking, no implicit SQL. Everything is explicit.
+Ecto looks like Entity Framework or Hibernate, but works differently: there's no lazy loading, no automatic change tracking, and no hidden SQL. You always say exactly what you want to happen.
 
 ### Schema = Entity
 
@@ -619,7 +619,7 @@ If this task crashes, the TaskSupervisor handles it — the Accumulator GenServe
 
 ## 12. PubSub — Decoupled Communication
 
-Instead of direct method calls between services, Cerno's processes communicate through a publish-subscribe event bus.
+Instead of services calling each other directly, Cerno's processes communicate by broadcasting and listening for events — like a message board that anyone can post to or read from.
 
 ```csharp
 // C# — direct coupling
@@ -643,7 +643,7 @@ end
 Phoenix.PubSub.broadcast(Cerno.PubSub, "accumulation:complete", {:accumulation_complete, path})
 ```
 
-The Accumulator doesn't know who's listening. The Reconciler subscribes to `"accumulation:complete"` in its own `init/1`. Neither process holds a reference to the other.
+The Accumulator doesn't know who's listening. The Reconciler subscribes to `"accumulation:complete"` in its own startup. Neither process knows the other exists — they only know about the topics they care about.
 
 ---
 
@@ -813,17 +813,17 @@ Called as:
 Insight.find_similar(embedding, threshold: 0.8, limit: 5)
 ```
 
-The `[threshold: 0.8, limit: 5]` syntax is a keyword list — a list of `{atom, value}` tuples. When it's the last argument to a function, the brackets are optional, making it look like named parameters.
+The `[threshold: 0.8, limit: 5]` syntax is a keyword list — basically a list of name-value pairs. When it's the last argument to a function, the square brackets are optional, making it look like named parameters.
 
-`opts \\ []` means "default to an empty list if not provided."
+`opts \\ []` means "if no options are passed in, use an empty list as the default."
 
 ---
 
 ## 16. Concurrency With Task
 
-`Task` is Elixir's equivalent of `Task<T>` in C#, but backed by lightweight processes instead of thread pool threads.
+`Task` is Elixir's version of `Task<T>` in C#. The difference: Elixir tasks run in lightweight processes instead of thread pool threads, so you can have thousands of them without problems.
 
-### Fire-and-forget (supervised)
+### Start and don't wait (supervised)
 
 ```elixir
 # lib/cerno/process/accumulator.ex:58
@@ -832,9 +832,9 @@ Task.Supervisor.start_child(Cerno.Process.TaskSupervisor, fn ->
 end)
 ```
 
-Like `Task.Run(() => RunAccumulation(path))` but supervised — if it crashes, the supervisor knows.
+Like `Task.Run(() => RunAccumulation(path))` but watched by a supervisor — if it crashes, the supervisor handles the cleanup.
 
-### Async with timeout
+### Run in the background with a time limit
 
 ```elixir
 # lib/cerno/llm/claude_cli.ex
@@ -850,10 +850,10 @@ case Task.yield(task, @cli_timeout_ms) || Task.shutdown(task, :brutal_kill) do
 end
 ```
 
-- `Task.async` — starts work, returns a handle
-- `Task.yield(task, timeout)` — wait up to N ms for a result
-- `Task.shutdown(task, :brutal_kill)` — kill it if it didn't finish
-- The `||` chain means: "try yield; if it returns nil (timeout), shut it down"
+- `Task.async` — starts the work in the background, gives you a handle to check on it
+- `Task.yield(task, timeout)` — wait up to N milliseconds for it to finish
+- `Task.shutdown(task, :brutal_kill)` — force-stop it if it took too long
+- The `||` chain reads: "try to get the result; if it times out (returns nil), kill the task"
 
 ---
 
@@ -861,7 +861,7 @@ end
 
 | Elixir | Java/C# | Notes |
 |---|---|---|
-| `:atom` | Enum value / interned string | Lightweight constant. `:ok`, `:error`, `:active` |
+| `:atom` | Enum value / interned string | A named label. `:ok`, `:error`, `:active` |
 | `"string #{expr}"` | `$"string {expr}"` | String interpolation |
 | `[1, 2, 3]` | `List<int>` | Linked list (not array) |
 | `{:ok, val}` | `(ResultStatus.Ok, val)` | Tuple — fixed-size, mixed types |
@@ -871,7 +871,7 @@ end
 | `alias Mod` | `using Mod` | Shortens `Cerno.ShortTerm.Insight` to `Insight` |
 | `import Mod` | `using static Mod` | Brings functions into current scope |
 | `require Mod` | N/A | Needed for compile-time macros |
-| `inspect(term)` | `.ToString()` | Debug representation of any value |
+| `inspect(value)` | `.ToString()` | Turns any value into a readable string for debugging |
 | `# comment` | `// comment` | |
 | `nil` | `null` | |
-| `true`, `false` | `true`, `false` | Atoms, not a separate bool type |
+| `true`, `false` | `true`, `false` | These are actually just atoms, not a separate boolean type |
