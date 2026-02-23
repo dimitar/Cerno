@@ -9,7 +9,8 @@ defmodule Cerno.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
-      escript: escript()
+      escript: escript(),
+      test_coverage: [tool: ExCoveralls]
     ]
   end
 
@@ -17,6 +18,18 @@ defmodule Cerno.MixProject do
     [
       extra_applications: [:logger],
       mod: {Cerno.Application, []}
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [
+        coveralls: :test,
+        "coveralls.detail": :test,
+        "coveralls.post": :test,
+        "coveralls.html": :test,
+        "coveralls.github": :test
+      ]
     ]
   end
 
@@ -42,6 +55,7 @@ defmodule Cerno.MixProject do
 
       # Testing
       {:mox, "~> 1.1", only: :test},
+      {:excoveralls, "~> 0.18", only: :test},
 
       # Documentation
       {:ex_doc, "~> 0.35", only: :dev, runtime: false}

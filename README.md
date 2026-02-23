@@ -1,5 +1,12 @@
 # Cerno
 
+[![CI](https://github.com/dimitar/Cerno/actions/workflows/ci.yml/badge.svg)](https://github.com/dimitar/Cerno/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/dimitar/Cerno/branch/main/graph/badge.svg)](https://codecov.io/gh/dimitar/Cerno)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![Elixir](https://img.shields.io/badge/Elixir-1.19-purple.svg)](https://elixir-lang.org/)
+[![GitHub stars](https://img.shields.io/github/stars/dimitar/Cerno)](https://github.com/dimitar/Cerno/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/dimitar/Cerno)](https://github.com/dimitar/Cerno/issues)
+
 *Latin: "I sift, I separate, I decide" — the root of discernment.*
 
 Cerno is a bidirectional memory system for AI agents. It governs the accumulation, sorting, linking, and ranking of knowledge across layered memory stores — from atomic project files up to long-term wisdom, and back down again.
@@ -104,6 +111,10 @@ cerno principles               # List long-term principles
 cerno reconcile                # Trigger reconciliation
 cerno organise                 # Trigger organisation
 ```
+
+## Contributing
+
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for development setup, coding conventions, and PR guidelines.
 
 ## Documentation
 
