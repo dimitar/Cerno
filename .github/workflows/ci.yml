@@ -60,10 +60,6 @@ jobs:
         run: mix compile --warnings-as-errors
 
       - name: Run tests with coverage
-        run: mix coveralls.json
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          files: cover/excoveralls.json
-          token: ${{ secrets.CODECOV_TOKEN }}
+        run: mix coveralls.github
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

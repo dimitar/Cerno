@@ -1,7 +1,7 @@
 # Cerno
 
 [![CI](https://github.com/dimitar/Cerno/actions/workflows/ci.yml/badge.svg)](https://github.com/dimitar/Cerno/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/dimitar/Cerno/branch/main/graph/badge.svg)](https://codecov.io/gh/dimitar/Cerno)
+[![Coverage Status](https://coveralls.io/repos/github/dimitar/Cerno/badge.svg?branch=main)](https://coveralls.io/github/dimitar/Cerno?branch=main)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Elixir](https://img.shields.io/badge/Elixir-1.19-purple.svg)](https://elixir-lang.org/)
 [![GitHub stars](https://img.shields.io/github/stars/dimitar/Cerno)](https://github.com/dimitar/Cerno/stargazers)
