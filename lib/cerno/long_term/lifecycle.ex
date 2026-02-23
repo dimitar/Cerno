@@ -14,6 +14,8 @@ defmodule Cerno.LongTerm.Lifecycle do
   alias Cerno.Repo
   alias Cerno.LongTerm.{Principle, PrincipleLink}
 
+  @max_batch_size 10_000
+
   @doc """
   Run the full lifecycle pipeline: decay → recompute ranks → prune.
   """
@@ -43,8 +45,12 @@ defmodule Cerno.LongTerm.Lifecycle do
     now = DateTime.utc_now()
 
     principles =
-      from(p in Principle, where: p.status in [:active, :decaying])
+      from(p in Principle, where: p.status in [:active, :decaying], limit: ^@max_batch_size)
       |> Repo.all()
+
+    if length(principles) == @max_batch_size do
+      Logger.warning("Decay capped at #{@max_batch_size} principles")
+    end
 
     count =
       Enum.reduce(principles, 0, fn principle, acc ->
@@ -76,8 +82,12 @@ defmodule Cerno.LongTerm.Lifecycle do
   @spec recompute_ranks() :: {:ok, non_neg_integer()}
   def recompute_ranks do
     principles =
-      from(p in Principle, where: p.status in [:active, :decaying])
+      from(p in Principle, where: p.status in [:active, :decaying], limit: ^@max_batch_size)
       |> Repo.all()
+
+    if length(principles) == @max_batch_size do
+      Logger.warning("Rank recomputation capped at #{@max_batch_size} principles")
+    end
 
     count =
       Enum.reduce(principles, 0, fn principle, acc ->

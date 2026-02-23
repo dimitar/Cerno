@@ -23,6 +23,8 @@ defmodule Cerno.Process.Accumulator do
   alias Cerno.Embedding.Pool, as: EmbeddingPool
   alias Cerno.{AccumulationRun, WatchedProject, Repo}
 
+  @cooldown_ms 30_000
+
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -44,28 +46,36 @@ defmodule Cerno.Process.Accumulator do
   @impl true
   def init(_opts) do
     Phoenix.PubSub.subscribe(Cerno.PubSub, "file:changed")
-    {:ok, %{processing: MapSet.new()}}
+    {:ok, %{processing: MapSet.new(), last_processed: %{}}}
   end
 
   @impl true
   def handle_cast({:accumulate, path}, state) do
-    if MapSet.member?(state.processing, path) do
-      Logger.debug("Already processing #{path}, skipping")
-      {:noreply, state}
-    else
-      state = %{state | processing: MapSet.put(state.processing, path)}
+    now = System.monotonic_time(:millisecond)
 
-      Task.Supervisor.start_child(Cerno.Process.TaskSupervisor, fn ->
-        try do
-          run_accumulation(path)
-        rescue
-          e -> Logger.error("Accumulation failed for #{path}: #{inspect(e)}")
-        after
-          GenServer.cast(__MODULE__, {:done, path})
-        end
-      end)
+    cond do
+      MapSet.member?(state.processing, path) ->
+        Logger.debug("Already processing #{path}, skipping")
+        {:noreply, state}
 
-      {:noreply, state}
+      within_cooldown?(state.last_processed, path, now) ->
+        Logger.debug("Path #{path} within cooldown, skipping")
+        {:noreply, state}
+
+      true ->
+        state = %{state | processing: MapSet.put(state.processing, path)}
+
+        Task.Supervisor.start_child(Cerno.Process.TaskSupervisor, fn ->
+          try do
+            run_accumulation(path)
+          rescue
+            e -> Logger.error("Accumulation failed for #{path}: #{inspect(e)}")
+          after
+            GenServer.cast(__MODULE__, {:done, path})
+          end
+        end)
+
+        {:noreply, state}
     end
   end
 
@@ -83,7 +93,13 @@ defmodule Cerno.Process.Accumulator do
 
   @impl true
   def handle_cast({:done, path}, state) do
-    state = %{state | processing: MapSet.delete(state.processing, path)}
+    now = System.monotonic_time(:millisecond)
+
+    state = %{
+      state
+      | processing: MapSet.delete(state.processing, path),
+        last_processed: Map.put(state.last_processed, path, now)
+    }
 
     Phoenix.PubSub.broadcast(
       Cerno.PubSub,
@@ -98,6 +114,13 @@ defmodule Cerno.Process.Accumulator do
   def handle_info({:file_changed, path}, state) do
     accumulate(path)
     {:noreply, state}
+  end
+
+  defp within_cooldown?(last_processed, path, now) do
+    case Map.get(last_processed, path) do
+      nil -> false
+      last_time -> now - last_time < @cooldown_ms
+    end
   end
 
   # --- Accumulation pipeline ---

@@ -34,11 +34,12 @@ lib/cerno/
 ├── postgrex_types.ex Pgvector type registration
 ├── accumulation_run.ex  Audit logging for scans
 ├── resolution_run.ex    Audit logging for resolutions
+├── security.ex       Path validation and input sanitization
 ├── watched_project.ex
 └── cli.ex
 config/               Environment configs (dev, test, runtime)
 priv/repo/migrations/ Postgres schema (pgvector, HNSW indexes)
-test/                 ExUnit tests (166 passing)
+test/                 ExUnit tests (186 passing)
 ```
 
 ## Design Principles
@@ -57,6 +58,7 @@ test/                 ExUnit tests (166 passing)
 - **Ecto schemas with changesets.** All DB types use explicit changesets with validation. Enums via `Ecto.Enum`.
 - **Keep modules small.** One schema per file, one process per file.
 - **Tests don't need Postgres** for pure logic. DB-backed tests use Ecto sandbox with `Cerno.Embedding.Mock` for deterministic embeddings.
+- **Defense-in-depth constraints.** File size limits (1MB max for context files), path validation via `Cerno.Security` (symlink rejection), query batch limits, and TaskSupervisor child caps. See `docs/SECURITY_CONSTRAINTS.md`.
 
 ## Running
 
@@ -67,7 +69,7 @@ export PATH="/c/Program Files/Erlang OTP/bin:/c/Program Files/Erlang OTP/erts-16
 mix deps.get          # Fetch dependencies
 mix ecto.setup        # Create DB + run migrations (needs Postgres with pgvector)
 mix compile           # Compile (should be 0 warnings)
-mix test              # Run tests (166 passing)
+mix test              # Run tests (186 passing)
 ```
 
 **Database:** Postgres password is configured in `config/dev.exs` and `config/test.exs`.

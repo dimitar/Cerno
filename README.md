@@ -96,7 +96,7 @@ git clone https://github.com/dimitar/Cerno.git
 cd Cerno
 mix deps.get
 mix ecto.setup    # Creates database and runs migrations
-mix test          # 166 tests, 0 failures
+mix test          # 186 tests, 0 failures
 ```
 
 ### CLI Usage
@@ -121,6 +121,7 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** for development setup, coding convent
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — Current implementation status, module inventory, what's built vs remaining
 - **[docs/DESIGN.md](docs/DESIGN.md)** — Original architecture specification from the planning phase
 - **[docs/ELIXIR_FOR_OOP_DEVS.md](docs/ELIXIR_FOR_OOP_DEVS.md)** — Elixir guide for developers coming from Java/C#
+- **[docs/SECURITY_CONSTRAINTS.md](docs/SECURITY_CONSTRAINTS.md)** — Resource limits, path validation, and other safety constraints
 
 ## Status
 

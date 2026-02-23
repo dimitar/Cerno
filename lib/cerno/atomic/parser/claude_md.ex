@@ -10,12 +10,16 @@ defmodule Cerno.Atomic.Parser.ClaudeMd do
 
   alias Cerno.Atomic.{Fragment, Parser}
 
+  # 1 MB — CLAUDE.md files should never be larger
+  @max_file_size 1_048_576
+
   @impl true
   def file_pattern, do: "CLAUDE.md"
 
   @impl true
   def parse(path) do
-    with {:ok, content} <- File.read(path) do
+    with :ok <- check_file_size(path),
+         {:ok, content} <- File.read(path) do
       file_hash = Parser.hash_file(content)
       project = derive_project(path)
       now = DateTime.utc_now()
@@ -107,5 +111,18 @@ defmodule Cerno.Atomic.Parser.ClaudeMd do
     |> Path.expand()
     |> Path.dirname()
     |> Path.basename()
+  end
+
+  defp check_file_size(path) do
+    case File.stat(path) do
+      {:ok, %{size: size}} when size > @max_file_size ->
+        {:error, :file_too_large}
+
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 end

@@ -49,7 +49,8 @@ defmodule Cerno.Embedding.OpenAI do
           {:ok, embeddings}
 
         {:ok, %{status: status, body: body}} ->
-          {:error, {:api_error, status, body}}
+          # Only include the error message, not the full response body
+          {:error, {:api_error, status, Map.get(body, "error", %{})}}
 
         {:error, reason} ->
           {:error, reason}

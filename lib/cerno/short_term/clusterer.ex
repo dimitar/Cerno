@@ -21,6 +21,8 @@ defmodule Cerno.ShortTerm.Clusterer do
   alias Cerno.Repo
   alias Cerno.ShortTerm.{Insight, Cluster, Contradiction}
 
+  @max_cluster_insights 5_000
+
   # --- Pure math ---
 
   @doc """
@@ -71,13 +73,19 @@ defmodule Cerno.ShortTerm.Clusterer do
     config = Application.get_env(:cerno, :dedup, [])
     threshold = Keyword.get(config, :cluster_threshold, 0.88)
 
-    # Load all active insights with embeddings
+    # Load active insights with embeddings, capped to prevent O(n^2) blowup
     insights =
       from(i in Insight,
         where: i.status == :active,
-        where: not is_nil(i.embedding)
+        where: not is_nil(i.embedding),
+        order_by: [desc: i.observation_count],
+        limit: ^@max_cluster_insights
       )
       |> Repo.all()
+
+    if length(insights) == @max_cluster_insights do
+      Logger.warning("Clustering capped at #{@max_cluster_insights} insights (by observation_count)")
+    end
 
     Logger.info("Clustering #{length(insights)} active insights at threshold #{threshold}")
 

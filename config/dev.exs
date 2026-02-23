@@ -2,7 +2,8 @@ import Config
 
 config :cerno, Cerno.Repo,
   username: "postgres",
-  password: "super",
+  # Dev-only default; override with CERNO_DB_PASSWORD env var
+  password: System.get_env("CERNO_DB_PASSWORD") || "super",
   hostname: "localhost",
   database: "cerno_dev",
   types: Cerno.PostgrexTypes,

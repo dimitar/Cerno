@@ -18,6 +18,8 @@ defmodule Cerno.Process.Reconciler do
   alias Cerno.ShortTerm.{Clusterer, Confidence, Insight}
   alias Cerno.LongTerm.Derivation
 
+  @max_promotion_candidates 10_000
+
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -149,7 +151,8 @@ defmodule Cerno.Process.Reconciler do
             where: c.resolution_status == :unresolved,
             select: c.insight_b_id
           )
-        )
+        ),
+      limit: ^@max_promotion_candidates
     )
     |> Repo.all()
   end

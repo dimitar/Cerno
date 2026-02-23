@@ -30,6 +30,7 @@ defmodule Cerno.ShortTerm.Confidence do
   @multi_project_boost 0.05
   @observation_floor_max 0.6
   @observation_floor_log_base 50
+  @max_batch_size 10_000
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -43,8 +44,12 @@ defmodule Cerno.ShortTerm.Confidence do
   @spec adjust_all() :: {:ok, non_neg_integer()}
   def adjust_all do
     insights =
-      from(i in Insight, where: i.status == :active)
+      from(i in Insight, where: i.status == :active, limit: ^@max_batch_size)
       |> Repo.all()
+
+    if length(insights) == @max_batch_size do
+      Logger.warning("Confidence adjustment capped at #{@max_batch_size} insights")
+    end
 
     count =
       insights

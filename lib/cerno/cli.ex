@@ -14,7 +14,7 @@ defmodule Cerno.CLI do
     cerno daemon start|stop|status   Manage background daemon
   """
 
-  alias Cerno.{Repo, WatchedProject}
+  alias Cerno.{Repo, Security, WatchedProject}
 
   def main(args) do
     case args do
@@ -34,17 +34,22 @@ defmodule Cerno.CLI do
   end
 
   defp cmd_init([path | _]) do
-    path = Path.expand(path)
-    name = Path.basename(path)
+    case Security.validate_path(path) do
+      {:ok, expanded} ->
+        name = Path.basename(expanded)
 
-    case %WatchedProject{}
-         |> WatchedProject.changeset(%{name: name, path: path})
-         |> Repo.insert() do
-      {:ok, _} ->
-        IO.puts("Registered project: #{name} (#{path})")
+        case %WatchedProject{}
+             |> WatchedProject.changeset(%{name: name, path: expanded})
+             |> Repo.insert() do
+          {:ok, _} ->
+            IO.puts("Registered project: #{name} (#{expanded})")
 
-      {:error, changeset} ->
-        IO.puts("Error: #{inspect(changeset.errors)}")
+          {:error, changeset} ->
+            IO.puts("Error: #{inspect(changeset.errors)}")
+        end
+
+      {:error, reason} ->
+        IO.puts("Invalid path: #{reason}")
     end
   end
 
@@ -53,9 +58,15 @@ defmodule Cerno.CLI do
   end
 
   defp cmd_scan([path | _]) do
-    IO.puts("Scanning #{path}...")
-    Cerno.Process.Accumulator.accumulate(Path.expand(path))
-    IO.puts("Scan triggered.")
+    case Security.validate_path(path) do
+      {:ok, expanded} ->
+        IO.puts("Scanning #{expanded}...")
+        Cerno.Process.Accumulator.accumulate(expanded)
+        IO.puts("Scan triggered.")
+
+      {:error, reason} ->
+        IO.puts("Invalid path: #{reason}")
+    end
   end
 
   defp cmd_scan([]) do
@@ -73,16 +84,22 @@ defmodule Cerno.CLI do
 
     dry_run? = Keyword.get(opts, :dry_run, false)
 
-    case Cerno.Process.Resolver.resolve(Path.expand(path), dry_run: dry_run?) do
-      {:ok, output} ->
-        if dry_run? do
-          IO.puts(output)
-        else
-          IO.puts("Resolved principles into #{path}")
+    case Security.validate_path(path) do
+      {:ok, expanded} ->
+        case Cerno.Process.Resolver.resolve(expanded, dry_run: dry_run?) do
+          {:ok, output} ->
+            if dry_run? do
+              IO.puts(output)
+            else
+              IO.puts("Resolved principles into #{expanded}")
+            end
+
+          {:error, reason} ->
+            IO.puts("Error: #{inspect(reason)}")
         end
 
       {:error, reason} ->
-        IO.puts("Error: #{inspect(reason)}")
+        IO.puts("Invalid path: #{reason}")
     end
   end
 

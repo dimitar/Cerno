@@ -19,6 +19,7 @@ defmodule Cerno.Watcher.FileWatcher do
   alias Cerno.Atomic.Parser
 
   @default_interval_ms 30_000
+  @max_file_size 1_048_576
 
   # --- Public API ---
 
@@ -119,9 +120,16 @@ defmodule Cerno.Watcher.FileWatcher do
   defp hash_context_files(project_path) do
     find_context_files(project_path)
     |> Enum.reduce(%{}, fn file_path, acc ->
-      case File.read(file_path) do
-        {:ok, content} -> Map.put(acc, file_path, Parser.hash_file(content))
-        {:error, _} -> acc
+      with {:ok, %{size: size}} when size <= @max_file_size <- File.stat(file_path),
+           {:ok, content} <- File.read(file_path) do
+        Map.put(acc, file_path, Parser.hash_file(content))
+      else
+        {:ok, %{size: _}} ->
+          Logger.warning("Skipping oversized file: #{file_path}")
+          acc
+
+        _ ->
+          acc
       end
     end)
   end

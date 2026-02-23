@@ -38,7 +38,7 @@ defmodule Cerno.Application do
       {DynamicSupervisor, name: Cerno.Watcher.Supervisor, strategy: :one_for_one},
 
       # Task supervisor for async work within processes
-      {Task.Supervisor, name: Cerno.Process.TaskSupervisor},
+      {Task.Supervisor, name: Cerno.Process.TaskSupervisor, max_children: 20},
 
       # Core processes (accumulation pipeline)
       Cerno.Process.Accumulator,

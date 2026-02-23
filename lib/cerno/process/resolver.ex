@@ -14,7 +14,7 @@ defmodule Cerno.Process.Resolver do
   require Logger
 
   alias Cerno.LongTerm.Retriever
-  alias Cerno.ResolutionRun
+  alias Cerno.{ResolutionRun, Security}
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -53,6 +53,18 @@ defmodule Cerno.Process.Resolver do
   end
 
   defp run_resolution(path, opts) do
+    dry_run? = Keyword.get(opts, :dry_run, false)
+
+    if dry_run? do
+      do_resolution(path, opts)
+    else
+      with {:ok, validated} <- Security.validate_path(path) do
+        do_resolution(validated, opts)
+      end
+    end
+  end
+
+  defp do_resolution(path, opts) do
     formatter = Keyword.get(opts, :agent, Cerno.Formatter.default())
     dry_run? = Keyword.get(opts, :dry_run, false)
     agent_type = formatter |> Module.split() |> List.last() |> String.downcase()

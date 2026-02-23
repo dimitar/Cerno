@@ -49,14 +49,15 @@ defmodule Cerno.Embedding.Cache do
 
   defp maybe_evict do
     if :ets.info(@table_name, :size) > @max_entries do
-      # Evict oldest 10%
-      all =
-        :ets.tab2list(@table_name)
-        |> Enum.sort_by(fn {_k, _v, ts} -> ts end)
+      # Evict oldest 10% using select to only fetch keys and timestamps
+      evict_count = div(@max_entries, 10)
 
-      to_remove = Enum.take(all, div(@max_entries, 10))
+      keys_with_ts =
+        :ets.select(@table_name, [{{:"$1", :_, :"$2"}, [], [{{:"$1", :"$2"}}]}])
+        |> Enum.sort_by(fn {_key, ts} -> ts end)
+        |> Enum.take(evict_count)
 
-      Enum.each(to_remove, fn {key, _, _} ->
+      Enum.each(keys_with_ts, fn {key, _ts} ->
         :ets.delete(@table_name, key)
       end)
     end

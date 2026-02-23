@@ -85,33 +85,29 @@ defmodule Cerno.LLM.ClaudeCli do
   @cli_timeout_ms 30_000
 
   defp run_cli(prompt) do
-    tmp_path = Path.join(System.tmp_dir!(), "cerno_prompt_#{:erlang.unique_integer([:positive])}.txt")
-    File.write!(tmp_path, prompt)
-
-    # Use shell piping to avoid command-line length limits
-    shell_cmd =
+    executable =
       case :os.type() do
-        {:win32, _} ->
-          win_path = String.replace(tmp_path, "/", "\\")
-          ~c'type "#{win_path}" | claude -p --output-format json 2>&1'
-
-        _ ->
-          ~c'cat "#{tmp_path}" | claude -p --output-format json 2>&1'
+        {:win32, _} -> "claude.cmd"
+        _ -> "claude"
       end
 
     task =
       Task.async(fn ->
         try do
-          output = :os.cmd(shell_cmd) |> List.to_string()
-          {output, 0}
+          System.cmd(executable, ["-p", "--output-format", "json"],
+            input: prompt,
+            stderr_to_stdout: true
+          )
         rescue
-          e -> {"Error: #{inspect(e)}", 1}
-        after
-          File.rm(tmp_path)
+          e in ErlangError -> {:error, :cli_not_found, e}
         end
       end)
 
     case Task.yield(task, @cli_timeout_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:error, :cli_not_found, e}} ->
+        Logger.warning("Claude CLI not available: #{inspect(e)}")
+        {:error, :cli_not_found}
+
       {:ok, {output, 0}} ->
         {:ok, output}
 
@@ -120,14 +116,9 @@ defmodule Cerno.LLM.ClaudeCli do
         {:error, {:exit_code, exit_code, output}}
 
       nil ->
-        File.rm(tmp_path)
         Logger.warning("Claude CLI timed out after #{@cli_timeout_ms}ms")
         {:error, :timeout}
     end
-  rescue
-    e in ErlangError ->
-      Logger.warning("Claude CLI not available: #{inspect(e)}")
-      {:error, :cli_not_found}
   end
 
   @doc false
