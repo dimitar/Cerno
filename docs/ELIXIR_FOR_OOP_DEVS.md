@@ -76,6 +76,24 @@ state = %{state | processing: MapSet.put(state.processing, path)}
 
 `%{state | processing: ...}` creates a **new** map with the `processing` key replaced. The old `state` is untouched. This is why you see a lot of `variable = expression` rebinding — it's not mutation, it's creating new values and rebinding the name.
 
+**So what happens to the old value?** It stays in memory, unchanged. If nothing else references it, the garbage collector cleans it up. If something *does* still reference it (another variable, another process), they still see the original value. This is the big difference from C#/Java:
+
+```csharp
+// C# — mutation affects everyone holding a reference
+var list = sharedList;
+sharedList.Add("x");
+// list ALSO sees "x" — it's the same object in memory
+```
+
+```elixir
+# Elixir — rebinding only affects this name
+list = shared_list
+shared_list = shared_list ++ ["x"]
+# list still has the ORIGINAL value — shared_list now points to a new list
+```
+
+This is why Elixir doesn't need locks for concurrency: if you send data to another process, nobody can change it out from under them.
+
 **Map update syntax:**
 - `%{map | key: value}` — update existing keys (crashes if the key isn't already in the map)
 - `Map.put(map, key, value)` — insert a new key or update an existing one
