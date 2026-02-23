@@ -212,6 +212,8 @@ This is why Elixir doesn't need locks for concurrency: if you send data to anoth
 
 This is the single biggest mental shift. Pattern matching is used **everywhere**: function definitions, `case`, `with`, and plain `=`.
 
+**Why is this better than if/switch?** Pattern matching checks the shape of data and pulls out the values you need in one step. In C# you'd check a condition, then separately extract values — pattern matching does both at once. It also means you can't accidentally access data without first confirming it's the right shape. For example, you can't get at the `value` inside `{:ok, value}` without first matching on `:ok` — the error case can't sneak past you. And when you define multiple versions of the same function with different patterns, anyone reading the code can immediately see every case that's handled, without scrolling through a long switch block.
+
 ### Multiple versions of the same function (like method overloading, but matching on values)
 
 ```csharp
