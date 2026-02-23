@@ -56,7 +56,7 @@ end
 Parser.parse("CLAUDE.md")
 ```
 
-There's no object. `parse/1` takes the data it needs as an argument. The `/1` notation means "function named `parse` that takes 1 argument" — Elixir identifies functions by name **and** arity.
+There's no object. `parse/1` takes the data it needs as an argument. The `/1` notation means "function named `parse` that takes 1 argument" — Elixir identifies functions by both their name **and** how many arguments they take. So `parse/1` and `parse/2` are considered two different functions.
 
 ---
 
@@ -77,8 +77,8 @@ state = %{state | processing: MapSet.put(state.processing, path)}
 `%{state | processing: ...}` creates a **new** map with the `processing` key replaced. The old `state` is untouched. This is why you see a lot of `variable = expression` rebinding — it's not mutation, it's creating new values and rebinding the name.
 
 **Map update syntax:**
-- `%{map | key: value}` — update existing keys (raises if key doesn't exist)
-- `Map.put(map, key, value)` — insert or update
+- `%{map | key: value}` — update existing keys (crashes if the key isn't already in the map)
+- `Map.put(map, key, value)` — insert a new key or update an existing one
 
 ---
 
@@ -108,9 +108,9 @@ def classify(content) when is_binary(content) do
 end
 ```
 
-Elixir tries each clause **top to bottom**. The first clause destructures a map that has both `:content` and `:section_heading` keys — pulling the values into local variables in one step. The second clause matches any binary string. The `when is_binary(content)` part is called a **guard**.
+Elixir tries each version **top to bottom** until one matches. The first version looks for a map that has both `:content` and `:section_heading` keys — it pulls those values out into variables in one step. The second version matches any plain string. The `when is_binary(content)` part is called a **guard** — it's an extra condition that must be true for the match to succeed. (In Elixir, "binary" just means "string".)
 
-### Destructuring in `case`
+### Pulling apart values in `case`
 
 ```elixir
 # lib/cerno/process/accumulator.ex:110-133
@@ -129,16 +129,16 @@ case check_file_changed(path) do
 end
 ```
 
-Each `->` arm is a pattern. `{:changed, file_hash}` simultaneously checks that the value is a 2-tuple whose first element is the atom `:changed`, **and** binds the second element to `file_hash`.
+Each `->` branch is a pattern. `{:changed, file_hash}` does two things at once: it checks that the value is a two-item pair starting with `:changed`, **and** saves the second item into a variable called `file_hash`.
 
-### Destructuring in `=`
+### Pulling apart values in `=`
 
 ```elixir
 # lib/cerno/process/accumulator.ex:344
 {line_start, line_end} = fragment.line_range || {0, 0}
 ```
 
-This is like `var (lineStart, lineEnd) = ...;` in C# tuple deconstruction, but it works on any data shape.
+This is like `var (lineStart, lineEnd) = ...;` in C# — it splits a pair into two separate variables. In Elixir, this works on any data shape, not just tuples.
 
 ---
 
@@ -207,19 +207,19 @@ case find_parser(filename) do
 end
 ```
 
-The convention is universal:
-- `{:ok, value}` — success
-- `{:error, reason}` — failure
-- Bare atoms like `:ok` or `:unchanged` for simple signals
+The pattern is the same everywhere:
+- `{:ok, value}` — it worked, here's the result
+- `{:error, reason}` — it failed, here's why
+- Simple labels like `:ok` or `:unchanged` when no extra data is needed
 
-Functions document this in their **typespecs**:
+Functions spell out what they return in their **type signatures**:
 
 ```elixir
 # lib/cerno/embedding.ex:13
 @callback embed(text :: String.t()) :: {:ok, embedding()} | {:error, term()}
 ```
 
-This is the equivalent of `Result<Embedding, Error>` in Rust, or a hypothetical `Either` in C#. The caller **must** handle both cases — there's no unchecked exception sneaking through.
+This says: "embed returns either `{:ok, embedding}` or `{:error, something}`." The caller **must** handle both cases — there's no hidden exception that might slip through.
 
 ---
 
@@ -245,13 +245,13 @@ with {:ok, decoded} <- decode_json(json_string),
 end
 ```
 
-Each `<-` line is a pattern match. If a line doesn't match (e.g., `{:error, reason}` comes back), the `with` short-circuits and returns that non-matching value. No nesting, no explicit error handling at each step.
+Each `<-` line checks whether the result matches the expected pattern. If any line doesn't match (e.g., `{:error, reason}` comes back instead of `{:ok, ...}`), the whole `with` block stops early and returns that failed value. No nesting, no error handling at each step.
 
 ---
 
 ## 7. Structs — Not Objects
 
-Structs are maps with a fixed set of keys and a name. They have no methods, no constructors, no inheritance.
+A struct is like a map, but with a fixed set of fields and a name. Unlike objects in Java/C#, structs have no methods, no constructors, and no inheritance.
 
 ```csharp
 // C#
@@ -279,9 +279,9 @@ defmodule Cerno.Atomic.Fragment do
 end
 ```
 
-- `@enforce_keys` — compile error if you create a struct without these (like `required` in C#)
-- `defstruct` — defines the shape
-- `build_id/2` — just a function in the same module; it doesn't belong to a Fragment "instance"
+- `@enforce_keys` — your code won't compile if you create a struct without these fields (like `required` in C#)
+- `defstruct` — lists all the fields the struct can have
+- `build_id/2` — just a regular function that lives in the same module; it doesn't belong to any particular Fragment
 
 Creating a struct:
 
@@ -296,7 +296,7 @@ Creating a struct:
 
 Accessing fields: `fragment.content` (dot syntax, like C#).
 
-**Type specs** describe the shape:
+**Type specs** describe what each field holds:
 
 ```elixir
 @type t :: %__MODULE__{
@@ -308,13 +308,13 @@ Accessing fields: `fragment.content` (dot syntax, like C#).
 }
 ```
 
-`__MODULE__` is a compile-time constant for the current module name (like `typeof(this).Name`).
+`__MODULE__` is automatically replaced with the current module's name at compile time (like `typeof(this).Name` in C#).
 
 ---
 
 ## 8. Behaviours — Elixir's Interfaces
 
-Behaviours are Elixir's answer to `interface` in Java/C#. They define a contract that implementing modules must fulfill.
+Behaviours are Elixir's version of `interface` in Java/C#. They define a set of functions that any implementing module **must** provide.
 
 **Defining the interface:**
 
@@ -366,9 +366,9 @@ defmodule Cerno.Embedding.OpenAI do
 end
 ```
 
-`@impl true` is a compiler annotation — it confirms "this function implements a behaviour callback" and warns at compile time if the signature doesn't match.
+`@impl true` is a marker that tells the compiler "this function is required by a behaviour." If the function name or arguments don't match what the behaviour expects, you'll get a warning when you compile.
 
-**Dynamic dispatch** (runtime polymorphism without inheritance):
+**Choosing the implementation at runtime** (without inheritance):
 
 ```elixir
 # lib/cerno/embedding.ex:23-24
@@ -379,7 +379,7 @@ end
 def embed(text), do: provider().embed(text)
 ```
 
-The provider module is loaded from configuration. `provider().embed(text)` calls `embed/1` on whatever module is configured — OpenAI in production, Mock in tests. This is like dependency injection through configuration rather than constructor injection.
+The provider module is loaded from a config file. `provider().embed(text)` calls `embed` on whatever module is configured — OpenAI in production, a fake (Mock) in tests. This is how Elixir does dependency injection: swap the module in config instead of passing it through a constructor.
 
 ---
 
@@ -413,11 +413,11 @@ schema "insights" do
 end
 ```
 
-`~w(active contradicted)a` is a **sigil** — shorthand for `[:active, :contradicted]` (a list of atoms). The `a` modifier converts the words to atoms.
+`~w(active contradicted)a` is a shortcut for writing `[:active, :contradicted]` (a list of atoms). The `~w(...)` splits words by spaces, and the `a` at the end turns them into atoms.
 
-### Changeset = Validated Mutation Proposal
+### Changeset = A Proposed Change with Validation
 
-There's no `insight.Content = "new"` followed by `db.SaveChanges()`. Instead, you build a **changeset** — a data structure describing *proposed* changes with validation:
+There's no `insight.Content = "new"` followed by `db.SaveChanges()`. Instead, you build a **changeset** — a package that describes what you *want* to change, along with rules that must pass before the change goes through:
 
 ```elixir
 # lib/cerno/short_term/insight.ex:41-61
@@ -454,10 +454,10 @@ from(i in __MODULE__,
 ```
 
 - `from(i in __MODULE__, ...)` — like `from i in dbContext.Insights select ...` in LINQ
-- `^variable` — the **pin operator** — interpolates a value into the query (parameterized, SQL-injection safe)
-- `fragment(...)` — raw SQL escape hatch for things Ecto doesn't model (here: pgvector's `<=>` operator)
+- `^variable` — the **pin operator** — plugs a variable's value into the query safely (prevents SQL injection)
+- `fragment(...)` — lets you write raw SQL for things Ecto doesn't support natively (here: pgvector's `<=>` distance operator)
 
-Queries are composable:
+Queries can be built up piece by piece:
 
 ```elixir
 query = from(i in Insight, where: i.status == :active)
@@ -476,9 +476,9 @@ Repo.all(query)
 
 ## 10. GenServer — Stateful Processes
 
-This is the biggest conceptual leap. In Java/C#, you have objects with mutable state, protected by locks. In Elixir, **each stateful thing is a separate OS-lightweight process** with a message queue.
+This is the biggest mental shift. In Java/C#, you have objects with changeable data, protected by locks so multiple threads don't corrupt it. In Elixir, **each piece of data that needs to persist is held by its own lightweight process** with a message queue (like an inbox).
 
-A GenServer is like a thread-safe singleton service with an inbox.
+Think of a GenServer as a service that processes requests one at a time from its inbox — no locks needed.
 
 ### The Java/C# equivalent (conceptual)
 
@@ -554,21 +554,21 @@ Key concepts:
 
 | GenServer concept | Java/C# equivalent |
 |---|---|
-| `handle_call` | Synchronous method call (caller blocks for reply) |
-| `handle_cast` | Fire-and-forget (`void` async method) |
+| `handle_call` | A request where the caller waits for a response |
+| `handle_cast` | A request where the caller doesn't wait ("fire and forget") |
 | `handle_info` | Handling a timer tick or system event |
-| `state` (second arg) | Instance fields, but immutable — return new state |
-| `from` | The caller's return address (like `TaskCompletionSource`) |
-| `GenServer.reply(from, value)` | `tcs.SetResult(value)` |
-| `{:noreply, new_state}` | "I'll reply later / I already replied / this was cast" |
+| `state` (second arg) | The process's stored data — you return a new version each time |
+| `from` | Who sent the request, so you can reply later |
+| `GenServer.reply(from, value)` | Send the response back to the caller |
+| `{:noreply, new_state}` | "I'll reply later / I already replied / this was a cast" |
 
-**No locks needed.** Messages are processed one at a time. The process's state is only accessible inside its callbacks.
+**No locks needed.** Messages are handled one at a time, in order. Only the process itself can see or change its own state.
 
 ---
 
 ## 11. Supervision Trees — Let It Crash
 
-In Java/C# you write defensive code and try to handle every error. In Elixir, you structure your system so that crashes are **safe and recoverable**.
+In Java/C# you write defensive code and try to handle every possible error. In Elixir, you design your system so that crashes are **safe and the system recovers automatically**.
 
 ```elixir
 # lib/cerno/application.ex
@@ -592,11 +592,11 @@ def start(_type, _args) do
 end
 ```
 
-- `strategy: :one_for_one` — if a child crashes, restart **only that child**
-- Each child is a GenServer (or similar process) that gets restarted from scratch with clean state
-- This is like a service orchestrator that auto-restarts failed microservices
+- `strategy: :one_for_one` — if one child crashes, restart **only that child**, leave the rest alone
+- Each child is a process that gets restarted from scratch with a clean slate
+- Think of it like a service manager that automatically restarts any service that goes down
 
-**DynamicSupervisor** is for children created at runtime (e.g., one FileWatcher per watched project — like a `ConcurrentDictionary<string, FileWatcher>` that auto-restarts entries).
+**DynamicSupervisor** is for processes created on the fly (e.g., one FileWatcher per watched project — you can add and remove them at runtime, and they auto-restart if they crash).
 
 **Task.Supervisor** manages short-lived background work:
 
@@ -649,7 +649,7 @@ The Accumulator doesn't know who's listening. The Reconciler subscribes to `"acc
 
 ## 13. Enum, Captures, and Closures
 
-`Enum` is Elixir's LINQ / Java Streams. All collection operations go through it.
+`Enum` is Elixir's version of LINQ (C#) or Java Streams. All list/collection operations go through it.
 
 ### Anonymous functions
 
@@ -683,7 +683,7 @@ Enum.reject(items, fn x -> is_nil(x) end)
 Enum.reject(items, &is_nil/1)
 ```
 
-`&is_nil/1` means "a reference to the `is_nil` function with arity 1."
+`&is_nil/1` means "a reference to the `is_nil` function that takes 1 argument."
 
 ### Common Enum operations
 
@@ -715,13 +715,13 @@ Enum.reduce(learnings, %{insights_created: 0, insights_updated: 0}, fn learning,
 end)
 ```
 
-This is like `Aggregate` in C# — start with `{0, 0}`, walk each learning, return a new stats map. Pattern matching in the `case` determines which counter to increment.
+This is like `Aggregate` in C# — start with `{0, 0}`, go through each learning one by one, and build up a new stats map. The `case` checks what happened and bumps the right counter.
 
 ---
 
 ## 14. Module Attributes — Constants and Metadata
 
-Module attributes (`@name value`) serve multiple purposes:
+Module attributes (`@name value`) are used for several things:
 
 ### Compile-time constants (like `const` or `static readonly`)
 
@@ -744,7 +744,7 @@ def get_embedding(text), do: ...
 
 `@moduledoc` and `@doc` are built into the language and power `mix docs` (like XML doc comments or Javadoc).
 
-### Computed constants (evaluated at compile time)
+### Pre-calculated values (built once when the code compiles)
 
 ```elixir
 # lib/cerno/short_term/classifier.ex:43-72
@@ -755,7 +755,7 @@ def get_embedding(text), do: ...
 }
 ```
 
-This map is built once at compile time, not at each function call. You can even compute attributes from other attributes:
+This map is built once when the code compiles, not every time a function runs. You can even build one attribute from another:
 
 ```elixir
 @negation_pairs [{"always", "never"}, {"use", "avoid"}, ...]
@@ -765,7 +765,7 @@ This map is built once at compile time, not at each function call. You can even 
 end)
 ```
 
-The regexes are compiled once at build time, not at runtime.
+The regex patterns are built once when the code compiles, so they don't slow things down when the program runs.
 
 ### Typespecs
 
@@ -779,13 +779,13 @@ The regexes are compiled once at build time, not at runtime.
 @spec classify(String.t() | map()) :: classification()
 ```
 
-These are checked by Dialyzer (a static analysis tool), not at runtime. They're documentation that the toolchain can verify.
+These aren't checked while your program runs. Instead, a tool called Dialyzer can analyze your code before it runs and warn you about type mismatches. Think of it as documentation that a tool can automatically double-check.
 
 ---
 
 ## 15. Keyword Lists — Ordered Options Bags
 
-Keyword lists are a common pattern for optional function parameters — like `params` dictionaries or option objects.
+Keyword lists are a common way to pass optional settings to a function — similar to option objects or dictionaries of parameters.
 
 ```csharp
 // C#
