@@ -41,7 +41,10 @@ defmodule Cerno.MixProject do
       {:req, "~> 0.5"},
 
       # Testing
-      {:mox, "~> 1.1", only: :test}
+      {:mox, "~> 1.1", only: :test},
+
+      # Documentation
+      {:ex_doc, "~> 0.35", only: :dev, runtime: false}
     ]
   end
 

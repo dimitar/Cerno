@@ -109,6 +109,7 @@ cerno organise                 # Trigger organisation
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — Current implementation status, module inventory, what's built vs remaining
 - **[docs/DESIGN.md](docs/DESIGN.md)** — Original architecture specification from the planning phase
+- **[docs/ELIXIR_FOR_OOP_DEVS.md](docs/ELIXIR_FOR_OOP_DEVS.md)** — Elixir guide for developers coming from Java/C#
 
 ## Status
 
