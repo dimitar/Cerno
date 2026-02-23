@@ -4,6 +4,11 @@ defmodule Cerno.Watcher.FileWatcherTest do
   alias Cerno.Watcher.FileWatcher
 
   setup do
+    # The watcher broadcasts file:changed, which triggers Accumulator → Reconciler → Organiser.
+    # Those GenServers spawn Tasks that need DB access, so share the sandbox connection.
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Cerno.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(Cerno.Repo, {:shared, self()})
+
     tmp_dir = Path.join(System.tmp_dir!(), "cerno_watcher_test_#{:rand.uniform(100_000)}")
     File.mkdir_p!(tmp_dir)
     File.write!(Path.join(tmp_dir, "CLAUDE.md"), "## Rules\n\nInitial content")
@@ -78,6 +83,15 @@ defmodule Cerno.Watcher.FileWatcherTest do
 
       # Wait for poll to detect change
       assert_receive {:file_changed, _path}, 1000
+
+      # Stop the watcher immediately so no more file:changed events fire
+      FileWatcher.stop_watching(tmp_dir)
+
+      # The file:changed event triggers Accumulator → Reconciler → Organiser via PubSub.
+      # PubSub.broadcast is synchronous, so by the time assert_receive succeeds above,
+      # the Accumulator's mailbox already has the :accumulate cast. :sys.get_state acts
+      # as a mailbox barrier, so polling will correctly see the in-progress state.
+      wait_for_pipeline()
     end
 
     test "does not broadcast when file unchanged", %{tmp_dir: tmp_dir} do
@@ -89,6 +103,28 @@ defmodule Cerno.Watcher.FileWatcherTest do
       Process.sleep(400)
 
       refute_receive {:file_changed, _}, 200
+    end
+  end
+
+  defp wait_for_pipeline do
+    wait_for_idle(Cerno.Process.Accumulator, :processing, MapSet.new(), &Kernel.==/2)
+    wait_for_idle(Cerno.Process.Reconciler, :running, false, &Kernel.==/2)
+    wait_for_idle(Cerno.Process.Organiser, :running, false, &Kernel.==/2)
+  end
+
+  defp wait_for_idle(server, key, expected, comparator, elapsed \\ 0) do
+    state = :sys.get_state(server)
+    value = Map.get(state, key)
+
+    if comparator.(value, expected) do
+      :ok
+    else
+      if elapsed >= 5_000 do
+        :ok
+      else
+        Process.sleep(100)
+        wait_for_idle(server, key, expected, comparator, elapsed + 100)
+      end
     end
   end
 end

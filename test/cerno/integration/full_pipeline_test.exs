@@ -94,8 +94,11 @@ defmodule Cerno.Integration.FullPipelineTest do
         Repo.aggregate(Cluster, :count) >= 0
       end)
 
-      # Give reconciliation a moment to fully complete
-      Process.sleep(500)
+      # Wait for reconciliation to fully complete
+      wait_until(fn ->
+        %{running: running} = :sys.get_state(Cerno.Process.Reconciler)
+        not running
+      end)
 
       # Verify confidence was adjusted (some insights should have non-default confidence)
       _adjusted =
@@ -108,7 +111,10 @@ defmodule Cerno.Integration.FullPipelineTest do
       # Step 4: Organise
       # ========================================
       # Wait for any in-flight organisation from PubSub chain to settle
-      Process.sleep(500)
+      wait_until(fn ->
+        %{running: running} = :sys.get_state(Cerno.Process.Organiser)
+        not running
+      end)
       Organiser.organise()
 
       wait_until(fn ->
@@ -178,10 +184,18 @@ defmodule Cerno.Integration.FullPipelineTest do
 
       # Should not crash — just produce no insights from empty content
       Reconciler.reconcile()
-      Process.sleep(300)
+
+      wait_until(fn ->
+        %{running: running} = :sys.get_state(Cerno.Process.Reconciler)
+        not running
+      end)
 
       Organiser.organise()
-      Process.sleep(300)
+
+      wait_until(fn ->
+        %{running: running} = :sys.get_state(Cerno.Process.Organiser)
+        not running
+      end)
 
       # Resolve should work even with no principles
       {:ok, output} = Resolver.resolve(empty_path, dry_run: true)

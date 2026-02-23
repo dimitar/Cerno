@@ -95,6 +95,10 @@ defmodule Cerno.Process.ReconcilerTest do
 
       # Wait for completion
       assert_receive :reconciliation_complete, 5_000
+
+      # Reconciliation broadcasts reconciliation:complete which triggers Organiser via PubSub.
+      # Wait for the Organiser's spawned Task to finish before test exits.
+      wait_for_organiser()
     end
 
     test "creates clusters from similar insights" do
@@ -122,10 +126,36 @@ defmodule Cerno.Process.ReconcilerTest do
       Reconciler.reconcile()
       assert_receive :reconciliation_complete, 5_000
 
+      # Wait for Organiser (triggered by reconciliation:complete PubSub)
+      wait_for_organiser()
+
       # Verify clusters were created
       import Ecto.Query
       cluster_count = Repo.aggregate(from(c in Cerno.ShortTerm.Cluster), :count)
       assert cluster_count >= 1
+    end
+  end
+
+  defp wait_for_organiser do
+    # The Organiser receives :organise via PubSub after reconciliation:complete.
+    # PubSub.broadcast is synchronous, so by the time we receive :reconciliation_complete,
+    # the Organiser's mailbox already has the :organise cast. :sys.get_state drains the
+    # mailbox, so the first check will see running: true and we poll until done.
+    wait_for_organiser_idle(0)
+  end
+
+  defp wait_for_organiser_idle(elapsed) do
+    %{running: running} = :sys.get_state(Cerno.Process.Organiser)
+
+    if not running do
+      :ok
+    else
+      if elapsed >= 5_000 do
+        flunk("Timed out waiting for Organiser to finish")
+      else
+        Process.sleep(100)
+        wait_for_organiser_idle(elapsed + 100)
+      end
     end
   end
 end
