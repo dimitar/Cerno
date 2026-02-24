@@ -6,7 +6,7 @@ defmodule Cerno.Tuning do
   and outputs to stdout. Designed for `alias Cerno.Tuning, as: T` in IEx.
   """
 
-  alias Cerno.Tuning.{Inspect, Display}
+  alias Cerno.Tuning.{Inspect, Display, Promote}
 
   @config_groups [:dedup, :ranking, :decay, :promotion, :resolution, :embedding]
 
@@ -62,6 +62,24 @@ defmodule Cerno.Tuning do
         Display.section(to_string(group), format_config_values(values))
 
     IO.puts(output)
+  end
+
+  def eligible?(id) do
+    case Promote.explain_eligibility(id) do
+      {:error, :not_found} -> IO.puts("Insight ##{id} not found.")
+      result -> Display.format_eligibility(result) |> IO.puts()
+    end
+  end
+
+  def promotion_overview do
+    Promote.promotion_summary() |> Display.format_promotion_summary() |> IO.puts()
+  end
+
+  def what_if_promote(id) do
+    case Promote.what_if_promote(id) do
+      {:error, :not_found} -> IO.puts("Insight ##{id} not found.")
+      result -> Display.format_what_if(result) |> IO.puts()
+    end
   end
 
   defp format_config_values(values) when is_list(values) do

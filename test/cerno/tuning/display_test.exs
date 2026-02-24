@@ -394,4 +394,166 @@ defmodule Cerno.Tuning.DisplayTest do
       assert String.contains?(result, "0")
     end
   end
+
+  # --- format_eligibility/1 ---
+
+  describe "format_eligibility/1" do
+    test "shows all checks with pass/fail" do
+      eligibility = %{
+        insight_id: 1,
+        eligible?: false,
+        checks: [
+          %{name: :confidence, pass?: true, actual: 0.5, required: 0.3, gap_pct: 0.0},
+          %{name: :observations, pass?: false, actual: 0, required: 1, gap_pct: 1.0}
+        ],
+        nearest_threshold: %{name: :observations, gap_pct: 1.0, actual: 0, required: 1, pass?: false}
+      }
+      result = Display.format_eligibility(eligibility)
+      assert String.contains?(result, "PASS") or String.contains?(result, "pass")
+      assert String.contains?(result, "FAIL") or String.contains?(result, "fail")
+      assert String.contains?(result, "confidence")
+      assert String.contains?(result, "observations")
+    end
+
+    test "shows eligible banner when all pass" do
+      eligibility = %{
+        insight_id: 1,
+        eligible?: true,
+        checks: [%{name: :confidence, pass?: true, actual: 0.5, required: 0.3, gap_pct: 0.0}],
+        nearest_threshold: nil
+      }
+      result = Display.format_eligibility(eligibility)
+      assert result =~ ~r/eligible/i
+    end
+
+    test "shows nearest threshold hint when not eligible" do
+      eligibility = %{
+        insight_id: 42,
+        eligible?: false,
+        checks: [
+          %{name: :confidence, pass?: false, actual: 0.5, required: 0.7, gap_pct: 0.286},
+          %{name: :observations, pass?: false, actual: 1, required: 3, gap_pct: 0.667}
+        ],
+        nearest_threshold: %{name: :confidence, pass?: false, actual: 0.5, required: 0.7, gap_pct: 0.286}
+      }
+      result = Display.format_eligibility(eligibility)
+      assert result =~ "Nearest threshold"
+      assert result =~ "confidence"
+    end
+  end
+
+  # --- format_promotion_summary/1 ---
+
+  describe "format_promotion_summary/1" do
+    test "shows counts per group" do
+      summary = %{
+        total_active: 5,
+        eligible: [%{insight: %{id: 1, content: "test"}}],
+        blocked_by_confidence: [%{insight: %{id: 2, content: "low conf"}}],
+        blocked_by_observations: [],
+        blocked_by_age: [],
+        blocked_by_contradictions: [%{insight: %{id: 3, content: "contradicted"}}],
+        already_promoted: [%{insight: %{id: 4, content: "promoted"}}]
+      }
+      result = Display.format_promotion_summary(summary)
+      assert String.contains?(result, "5")
+      assert result =~ ~r/eligible/i
+      assert result =~ ~r/confidence/i
+    end
+
+    test "shows insight IDs in each group" do
+      summary = %{
+        total_active: 2,
+        eligible: [%{insight: %{id: 10, content: "eligible insight"}}],
+        blocked_by_confidence: [],
+        blocked_by_observations: [%{insight: %{id: 20, content: "needs more obs"}}],
+        blocked_by_age: [],
+        blocked_by_contradictions: [],
+        already_promoted: []
+      }
+      result = Display.format_promotion_summary(summary)
+      assert result =~ "#10"
+      assert result =~ "#20"
+    end
+
+    test "handles empty summary" do
+      summary = %{
+        total_active: 0,
+        eligible: [],
+        blocked_by_confidence: [],
+        blocked_by_observations: [],
+        blocked_by_age: [],
+        blocked_by_contradictions: [],
+        already_promoted: []
+      }
+      result = Display.format_promotion_summary(summary)
+      assert result =~ "Promotion Overview"
+      assert result =~ "0"
+    end
+  end
+
+  # --- format_what_if/1 ---
+
+  describe "format_what_if/1" do
+    test "shows promotion preview" do
+      result_data = %{
+        outcome: :would_promote,
+        principle_preview: %{
+          content: "Always use pattern matching",
+          category: :heuristic,
+          domains: ["elixir"],
+          rank: 0.45,
+          confidence: 0.8,
+          frequency: 5
+        },
+        potential_links: []
+      }
+      result = Display.format_what_if(result_data)
+      assert result =~ ~r/would.promote/i or String.contains?(result, "Would Promote")
+      assert String.contains?(result, "pattern matching")
+      assert String.contains?(result, "0.45")
+    end
+
+    test "shows potential links when present" do
+      result_data = %{
+        outcome: :would_promote,
+        principle_preview: %{
+          content: "Test content",
+          category: :learning,
+          domains: [],
+          rank: 0.5,
+          confidence: 0.6,
+          frequency: 3
+        },
+        potential_links: [
+          %{principle_id: 1, similarity: 0.75, content: "Related principle"}
+        ]
+      }
+      result = Display.format_what_if(result_data)
+      assert result =~ "Potential Links"
+      assert result =~ "Related principle"
+    end
+
+    test "shows dedup info for exact match" do
+      result_data = %{
+        outcome: :would_dedup_exact,
+        existing_principle_id: 7,
+        existing_principle: %{id: 7, content: "Existing principle", rank: 0.6}
+      }
+      result = Display.format_what_if(result_data)
+      assert result =~ ~r/dedup/i
+      assert String.contains?(result, "7")
+    end
+
+    test "shows dedup info for semantic match" do
+      result_data = %{
+        outcome: :would_dedup_semantic,
+        existing_principle_id: 12,
+        existing_principle: %{id: 12, content: "Semantically similar principle", rank: 0.9}
+      }
+      result = Display.format_what_if(result_data)
+      assert result =~ ~r/semantic/i
+      assert String.contains?(result, "12")
+    end
+  end
 end

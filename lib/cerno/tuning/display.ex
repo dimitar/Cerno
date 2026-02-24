@@ -313,4 +313,169 @@ defmodule Cerno.Tuning.Display do
     items = Enum.map(map, fn {k, v} -> "    #{k}: #{v}" end) |> Enum.join("\n")
     "  #{title}:\n#{items}\n"
   end
+
+  # --- Promotion formatters ---
+
+  @spec format_eligibility(map()) :: String.t()
+  def format_eligibility(%{insight_id: id, eligible?: eligible?, checks: checks, nearest_threshold: nearest}) do
+    check_lines =
+      Enum.map(checks, fn check ->
+        indicator =
+          if check.pass?,
+            do: IO.ANSI.green() <> "PASS" <> IO.ANSI.reset(),
+            else: IO.ANSI.red() <> "FAIL" <> IO.ANSI.reset()
+
+        gap_str =
+          case check.gap_pct do
+            nil -> ""
+            pct when pct == 0.0 -> ""
+            pct -> " (gap: #{format_cell_value(Float.round(pct * 100, 1))}%)"
+          end
+
+        "  #{indicator}  #{String.pad_trailing(to_string(check.name), 22)} actual: #{format_cell_value(check.actual)}  required: #{format_cell_value(check.required)}#{gap_str}"
+      end)
+      |> Enum.join("\n")
+
+    banner =
+      if eligible? do
+        "\n" <> IO.ANSI.green() <> IO.ANSI.bright() <> "  ✓ ELIGIBLE — this insight meets all promotion criteria." <> IO.ANSI.reset() <> "\n"
+      else
+        nearest_hint =
+          case nearest do
+            nil ->
+              ""
+
+            t ->
+              "\n" <>
+                IO.ANSI.yellow() <>
+                "  → Nearest threshold: #{t.name} — needs #{format_cell_value(t.required)}, has #{format_cell_value(t.actual)}" <>
+                IO.ANSI.reset() <> "\n"
+          end
+
+        "\n" <> IO.ANSI.red() <> "  ✗ NOT ELIGIBLE" <> IO.ANSI.reset() <> nearest_hint
+      end
+
+    header("Eligibility for Insight ##{id}") <> check_lines <> "\n" <> banner
+  end
+
+  @spec format_promotion_summary(map()) :: String.t()
+  def format_promotion_summary(summary) do
+    %{
+      total_active: total,
+      eligible: eligible,
+      blocked_by_confidence: by_conf,
+      blocked_by_observations: by_obs,
+      blocked_by_age: by_age,
+      blocked_by_contradictions: by_contra,
+      already_promoted: already
+    } = summary
+
+    groups = [
+      {"Eligible", eligible},
+      {"Blocked by Confidence", by_conf},
+      {"Blocked by Observations", by_obs},
+      {"Blocked by Age", by_age},
+      {"Blocked by Contradictions", by_contra},
+      {"Already Promoted", already}
+    ]
+
+    group_sections =
+      Enum.map(groups, fn {label, entries} ->
+        count = length(entries)
+
+        body =
+          if entries == [] do
+            "  None\n"
+          else
+            Enum.map(entries, fn entry ->
+              insight = entry.insight
+              "  • ##{insight.id}: #{truncate(Map.get(insight, :content, ""), 60)}"
+            end)
+            |> Enum.join("\n")
+            |> Kernel.<>("\n")
+          end
+
+        section("#{label} (#{count})", body)
+      end)
+      |> Enum.join("")
+
+    header("Promotion Overview") <>
+      "  Total active insights: #{total}\n" <>
+      group_sections
+  end
+
+  @spec format_what_if(map()) :: String.t()
+  def format_what_if(%{outcome: :would_promote} = result) do
+    preview = result.principle_preview
+    links = result.potential_links
+
+    fields = [
+      {"Content", truncate(preview.content, 80)},
+      {"Category", preview.category},
+      {"Domains", Enum.join(preview.domains || [], ", ")},
+      {"Rank", preview.rank},
+      {"Confidence", preview.confidence},
+      {"Frequency", preview.frequency}
+    ]
+
+    field_lines =
+      Enum.map(fields, fn {label, val} ->
+        "  #{String.pad_trailing(label, 14)} #{format_cell_value(val)}"
+      end)
+      |> Enum.join("\n")
+
+    links_section =
+      if links == [] do
+        section("Potential Links", "  None\n")
+      else
+        rows =
+          Enum.map(links, fn l ->
+            %{
+              principle_id: l.principle_id,
+              similarity: l.similarity,
+              content: truncate(l.content, 50)
+            }
+          end)
+
+        section("Potential Links", table(rows, [:principle_id, :similarity, :content]))
+      end
+
+    header("What-If: Would Promote") <>
+      IO.ANSI.green() <> "  Outcome: Would Promote" <> IO.ANSI.reset() <> "\n\n" <>
+      field_lines <> "\n" <>
+      links_section
+  end
+
+  def format_what_if(%{outcome: outcome} = result)
+      when outcome in [:would_dedup_exact, :would_dedup_semantic] do
+    label =
+      case outcome do
+        :would_dedup_exact -> "Exact Duplicate"
+        :would_dedup_semantic -> "Semantic Duplicate"
+      end
+
+    existing = result.existing_principle
+    existing_id = result.existing_principle_id
+
+    existing_content = truncate(Map.get(existing, :content, ""), 80)
+    existing_rank = Map.get(existing, :rank, nil)
+
+    fields = [
+      {"Principle ID", existing_id},
+      {"Content", existing_content},
+      {"Rank", existing_rank}
+    ]
+
+    field_lines =
+      Enum.map(fields, fn {label_text, val} ->
+        "  #{String.pad_trailing(label_text, 14)} #{format_cell_value(val)}"
+      end)
+      |> Enum.join("\n")
+
+    header("What-If: #{label}") <>
+      IO.ANSI.yellow() <>
+      "  Would deduplicate against Principle ##{existing_id}" <>
+      IO.ANSI.reset() <> "\n\n" <>
+      field_lines <> "\n"
+  end
 end

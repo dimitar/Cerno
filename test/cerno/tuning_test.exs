@@ -67,4 +67,25 @@ defmodule Cerno.TuningTest do
       assert output =~ "confidence_weight"
     end
   end
+
+  describe "eligible?/1" do
+    test "prints not found for bad ID" do
+      output = capture_io(fn -> Tuning.eligible?(-1) end)
+      assert output =~ "not found"
+    end
+  end
+
+  describe "promotion_overview/0" do
+    test "doesn't crash on empty DB" do
+      output = capture_io(fn -> Tuning.promotion_overview() end)
+      assert output =~ ~r/[Pp]romotion/
+    end
+  end
+
+  describe "what_if_promote/1" do
+    test "prints not found for bad ID" do
+      output = capture_io(fn -> Tuning.what_if_promote(-1) end)
+      assert output =~ "not found"
+    end
+  end
 end
