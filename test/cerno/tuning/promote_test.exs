@@ -106,7 +106,7 @@ defmodule Cerno.Tuning.PromoteTest do
 
       assert result.insight_id == insight.id
       assert result.eligible? == true
-      assert length(result.checks) == 5
+      assert length(result.checks) == 6
       assert result.nearest_threshold == nil
 
       assert Enum.all?(result.checks, & &1.pass?)

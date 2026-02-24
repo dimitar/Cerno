@@ -107,6 +107,7 @@ defmodule Cerno.Tuning.Promote do
     min_age_days = Keyword.get(config, :min_age_days, 7)
 
     checks = [
+      check_status_active(insight),
       check_confidence(insight, min_confidence),
       check_observations(insight, min_observations),
       check_age(insight, min_age_days),
@@ -126,6 +127,7 @@ defmodule Cerno.Tuning.Promote do
   end
 
   # Priority order: already_promoted > contradictions > confidence > observations > age
+  # (status_active check exists in eligibility but summary only feeds active insights)
   defp classify_blocking_reason(%{eligible?: true}), do: :eligible
 
   defp classify_blocking_reason(%{checks: checks}) do
@@ -146,6 +148,16 @@ defmodule Cerno.Tuning.Promote do
   end
 
   # --- Individual checks ---
+
+  defp check_status_active(insight) do
+    %{
+      name: :status_active,
+      pass?: insight.status == :active,
+      actual: insight.status,
+      required: :active,
+      gap_pct: nil
+    }
+  end
 
   defp check_confidence(insight, min_confidence) do
     pass? = insight.confidence >= min_confidence
@@ -200,7 +212,8 @@ defmodule Cerno.Tuning.Promote do
       name: :no_contradictions,
       pass?: count == 0,
       actual: count,
-      required: 0
+      required: 0,
+      gap_pct: nil
     }
   end
 
@@ -217,7 +230,8 @@ defmodule Cerno.Tuning.Promote do
       name: :not_already_promoted,
       pass?: not promoted?,
       actual: promoted?,
-      required: false
+      required: false,
+      gap_pct: nil
     }
   end
 
@@ -233,7 +247,7 @@ defmodule Cerno.Tuning.Promote do
 
   defp find_nearest_threshold(checks) do
     checks
-    |> Enum.filter(fn check -> not check.pass? and Map.has_key?(check, :gap_pct) end)
+    |> Enum.filter(fn check -> not check.pass? and check.gap_pct != nil end)
     |> case do
       [] -> nil
       failing -> Enum.min_by(failing, & &1.gap_pct)
