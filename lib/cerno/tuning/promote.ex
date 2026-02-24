@@ -43,28 +43,105 @@ defmodule Cerno.Tuning.Promote do
         {:error, :not_found}
 
       insight ->
-        config = Application.get_env(:cerno, :promotion, [])
-        min_confidence = Keyword.get(config, :min_confidence, 0.7)
-        min_observations = Keyword.get(config, :min_observations, 3)
-        min_age_days = Keyword.get(config, :min_age_days, 7)
+        build_eligibility(insight)
+    end
+  end
 
-        checks = [
-          check_confidence(insight, min_confidence),
-          check_observations(insight, min_observations),
-          check_age(insight, min_age_days),
-          check_no_contradictions(insight),
-          check_not_already_promoted(insight)
-        ]
+  @doc """
+  Returns a summary grouping all active insights by their promotion blocking reason.
 
-        eligible? = Enum.all?(checks, & &1.pass?)
-        nearest = find_nearest_threshold(checks)
+  Each insight appears in exactly one group, determined by priority order:
+  `already_promoted > contradictions > confidence > observations > age`.
 
-        %{
-          insight_id: insight_id,
-          eligible?: eligible?,
-          checks: checks,
-          nearest_threshold: nearest
+  Insights that pass all checks appear in the `:eligible` group.
+
+  Returns a map with:
+  - `total_active` — count of all active insights
+  - `eligible` — list of `%{insight: insight, eligibility: eligibility}`
+  - `blocked_by_confidence` — insights failing the confidence check
+  - `blocked_by_observations` — insights failing the observations check
+  - `blocked_by_age` — insights failing the age check
+  - `blocked_by_contradictions` — insights failing the no_contradictions check
+  - `already_promoted` — insights that have already been promoted
+  """
+  @spec promotion_summary() :: %{
+          total_active: integer(),
+          eligible: [%{insight: Insight.t(), eligibility: eligibility_result()}],
+          blocked_by_confidence: [%{insight: Insight.t(), eligibility: eligibility_result()}],
+          blocked_by_observations: [%{insight: Insight.t(), eligibility: eligibility_result()}],
+          blocked_by_age: [%{insight: Insight.t(), eligibility: eligibility_result()}],
+          blocked_by_contradictions: [%{insight: Insight.t(), eligibility: eligibility_result()}],
+          already_promoted: [%{insight: Insight.t(), eligibility: eligibility_result()}]
         }
+  def promotion_summary do
+    insights = Repo.all(from(i in Insight, where: i.status == :active))
+
+    entries =
+      Enum.map(insights, fn insight ->
+        eligibility = build_eligibility(insight)
+        %{insight: insight, eligibility: eligibility}
+      end)
+
+    empty = %{
+      total_active: length(insights),
+      eligible: [],
+      blocked_by_confidence: [],
+      blocked_by_observations: [],
+      blocked_by_age: [],
+      blocked_by_contradictions: [],
+      already_promoted: []
+    }
+
+    Enum.reduce(entries, empty, fn entry, acc ->
+      group = classify_blocking_reason(entry.eligibility)
+      Map.update!(acc, group, &[entry | &1])
+    end)
+  end
+
+  # --- Private: eligibility builder ---
+
+  defp build_eligibility(insight) do
+    config = Application.get_env(:cerno, :promotion, [])
+    min_confidence = Keyword.get(config, :min_confidence, 0.7)
+    min_observations = Keyword.get(config, :min_observations, 3)
+    min_age_days = Keyword.get(config, :min_age_days, 7)
+
+    checks = [
+      check_confidence(insight, min_confidence),
+      check_observations(insight, min_observations),
+      check_age(insight, min_age_days),
+      check_no_contradictions(insight),
+      check_not_already_promoted(insight)
+    ]
+
+    eligible? = Enum.all?(checks, & &1.pass?)
+    nearest = find_nearest_threshold(checks)
+
+    %{
+      insight_id: insight.id,
+      eligible?: eligible?,
+      checks: checks,
+      nearest_threshold: nearest
+    }
+  end
+
+  # Priority order: already_promoted > contradictions > confidence > observations > age
+  defp classify_blocking_reason(%{eligible?: true}), do: :eligible
+
+  defp classify_blocking_reason(%{checks: checks}) do
+    cond do
+      check_fails?(checks, :not_already_promoted) -> :already_promoted
+      check_fails?(checks, :no_contradictions) -> :blocked_by_contradictions
+      check_fails?(checks, :confidence) -> :blocked_by_confidence
+      check_fails?(checks, :observations) -> :blocked_by_observations
+      check_fails?(checks, :age) -> :blocked_by_age
+    end
+  end
+
+  defp check_fails?(checks, name) do
+    case Enum.find(checks, &(&1.name == name)) do
+      nil -> false
+      check -> not check.pass?
     end
   end
 

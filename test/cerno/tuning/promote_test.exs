@@ -203,4 +203,121 @@ defmodule Cerno.Tuning.PromoteTest do
       assert {:error, :not_found} = Promote.explain_eligibility(-1)
     end
   end
+
+  # --- promotion_summary/0 ---
+
+  describe "promotion_summary/0" do
+    test "groups insights by blocking reason" do
+      # eligible: meets all criteria (test config: min_confidence 0.5, min_observations 1, min_age_days 0)
+      _eligible = insert_insight(%{confidence: 0.8, observation_count: 3})
+      # blocked by confidence
+      _low_conf = insert_insight(%{confidence: 0.1, observation_count: 3})
+      # blocked by contradiction
+      contradicted = insert_insight(%{confidence: 0.8, observation_count: 3})
+      other = insert_insight(%{confidence: 0.1})
+      insert_contradiction(contradicted, other)
+      # already promoted
+      promoted = insert_insight(%{confidence: 0.8, observation_count: 3})
+      principle = insert_principle()
+      insert_derivation(principle, promoted)
+
+      summary = Promote.promotion_summary()
+
+      assert length(summary.eligible) >= 1
+      assert length(summary.blocked_by_confidence) >= 1
+      assert length(summary.blocked_by_contradictions) >= 1
+      assert length(summary.already_promoted) >= 1
+      assert is_integer(summary.total_active)
+    end
+
+    test "returns empty groups on empty DB" do
+      summary = Promote.promotion_summary()
+      assert summary.eligible == []
+      assert summary.blocked_by_confidence == []
+      assert summary.blocked_by_observations == []
+      assert summary.blocked_by_age == []
+      assert summary.blocked_by_contradictions == []
+      assert summary.already_promoted == []
+      assert summary.total_active == 0
+    end
+
+    test "no double-counting — insight in only one group" do
+      # This insight fails BOTH confidence and observations
+      _both_fail = insert_insight(%{confidence: 0.1, observation_count: 0})
+
+      summary = Promote.promotion_summary()
+
+      all_ids =
+        (summary.eligible ++
+           summary.blocked_by_confidence ++
+           summary.blocked_by_observations ++
+           summary.blocked_by_age ++
+           summary.blocked_by_contradictions ++
+           summary.already_promoted)
+        |> Enum.map(& &1.insight.id)
+
+      assert length(all_ids) == length(Enum.uniq(all_ids))
+    end
+
+    test "priority: already_promoted takes precedence over contradictions" do
+      # Insight that is both contradicted AND already promoted
+      insight = insert_insight(%{confidence: 0.8, observation_count: 3})
+      other = insert_insight(%{confidence: 0.5})
+      insert_contradiction(insight, other)
+      principle = insert_principle()
+      insert_derivation(principle, insight)
+
+      summary = Promote.promotion_summary()
+
+      promoted_ids = Enum.map(summary.already_promoted, & &1.insight.id)
+      contradicted_ids = Enum.map(summary.blocked_by_contradictions, & &1.insight.id)
+
+      assert insight.id in promoted_ids
+      refute insight.id in contradicted_ids
+    end
+
+    test "priority: contradictions takes precedence over confidence" do
+      # Insight that has both low confidence AND a contradiction
+      insight = insert_insight(%{confidence: 0.1, observation_count: 3})
+      other = insert_insight(%{confidence: 0.5})
+      insert_contradiction(insight, other)
+
+      summary = Promote.promotion_summary()
+
+      contradicted_ids = Enum.map(summary.blocked_by_contradictions, & &1.insight.id)
+      confidence_ids = Enum.map(summary.blocked_by_confidence, & &1.insight.id)
+
+      assert insight.id in contradicted_ids
+      refute insight.id in confidence_ids
+    end
+
+    test "total_active matches sum of all groups" do
+      insert_insight(%{confidence: 0.8, observation_count: 3})
+      insert_insight(%{confidence: 0.1, observation_count: 3})
+      insert_insight(%{confidence: 0.8, observation_count: 0})
+
+      summary = Promote.promotion_summary()
+
+      group_total =
+        length(summary.eligible) +
+          length(summary.blocked_by_confidence) +
+          length(summary.blocked_by_observations) +
+          length(summary.blocked_by_age) +
+          length(summary.blocked_by_contradictions) +
+          length(summary.already_promoted)
+
+      assert summary.total_active == group_total
+    end
+
+    test "each entry contains insight and eligibility" do
+      insert_insight(%{confidence: 0.8, observation_count: 3})
+
+      summary = Promote.promotion_summary()
+
+      [entry] = summary.eligible
+      assert %Insight{} = entry.insight
+      assert entry.eligibility.eligible? == true
+      assert is_list(entry.eligibility.checks)
+    end
+  end
 end
