@@ -320,4 +320,68 @@ defmodule Cerno.Tuning.PromoteTest do
       assert is_list(entry.eligibility.checks)
     end
   end
+
+  # --- what_if_promote/1 ---
+
+  describe "what_if_promote/1" do
+    test "simulates promotion and returns preview without persisting" do
+      insight = insert_insight(%{confidence: 0.8, observation_count: 3, domain: "elixir"})
+      principle_count_before = Repo.aggregate(Principle, :count)
+
+      result = Promote.what_if_promote(insight.id)
+
+      assert result.outcome == :would_promote
+      assert result.principle_preview.content == insight.content
+      assert result.principle_preview.rank > 0
+      assert result.principle_preview.domains == ["elixir"]
+      # Nothing persisted
+      assert Repo.aggregate(Principle, :count) == principle_count_before
+    end
+
+    test "detects exact dedup against existing principle" do
+      insight = insert_insight(%{confidence: 0.8, observation_count: 3})
+      _existing = insert_principle(%{content: insight.content})
+
+      result = Promote.what_if_promote(insight.id)
+      assert result.outcome == :would_dedup_exact
+      assert is_integer(result.existing_principle_id)
+    end
+
+    test "returns potential_links as empty list when no embedding" do
+      insight = insert_insight(%{confidence: 0.8, observation_count: 3})
+
+      result = Promote.what_if_promote(insight.id)
+      assert result.outcome == :would_promote
+      assert result.potential_links == []
+    end
+
+    test "returns error for non-existent insight" do
+      assert {:error, :not_found} = Promote.what_if_promote(-1)
+    end
+
+    test "preview includes correct category mapping" do
+      insight = insert_insight(%{confidence: 0.8, observation_count: 3, category: :warning})
+
+      result = Promote.what_if_promote(insight.id)
+      assert result.outcome == :would_promote
+      assert result.principle_preview.category == :anti_pattern
+    end
+
+    test "preview includes confidence and frequency from insight" do
+      insight = insert_insight(%{confidence: 0.9, observation_count: 5})
+
+      result = Promote.what_if_promote(insight.id)
+      assert result.outcome == :would_promote
+      assert result.principle_preview.confidence == 0.9
+      assert result.principle_preview.frequency == 5
+    end
+
+    test "preview returns empty domains when insight has no domain" do
+      insight = insert_insight(%{confidence: 0.8, observation_count: 3, domain: nil})
+
+      result = Promote.what_if_promote(insight.id)
+      assert result.outcome == :would_promote
+      assert result.principle_preview.domains == []
+    end
+  end
 end

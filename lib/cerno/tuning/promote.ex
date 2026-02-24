@@ -11,7 +11,17 @@ defmodule Cerno.Tuning.Promote do
 
   alias Cerno.Repo
   alias Cerno.ShortTerm.{Insight, Contradiction}
-  alias Cerno.LongTerm.Derivation
+  alias Cerno.LongTerm.{Principle, Derivation}
+
+  @category_map %{
+    convention: :heuristic,
+    principle: :principle,
+    technique: :learning,
+    warning: :anti_pattern,
+    preference: :heuristic,
+    fact: :learning,
+    pattern: :principle
+  }
 
   @type check :: %{
           name: atom(),
@@ -97,6 +107,132 @@ defmodule Cerno.Tuning.Promote do
       Map.update!(acc, group, &[entry | &1])
     end)
   end
+
+  @doc """
+  Simulates promoting an insight without persisting anything.
+
+  Returns a read-only preview of what would happen if the insight were promoted:
+  - `%{outcome: :would_dedup_exact, ...}` if an existing principle has the same content hash.
+  - `%{outcome: :would_dedup_semantic, ...}` if an existing principle is semantically similar (>= 0.92).
+  - `%{outcome: :would_promote, principle_preview: ..., potential_links: [...]}` otherwise.
+
+  Returns `{:error, :not_found}` if the insight doesn't exist.
+  """
+  @spec what_if_promote(integer()) :: map() | {:error, :not_found}
+  def what_if_promote(insight_id) do
+    case Repo.get(Insight, insight_id) do
+      nil ->
+        {:error, :not_found}
+
+      insight ->
+        simulate_promotion(insight)
+    end
+  end
+
+  # --- Private: what_if_promote helpers ---
+
+  defp simulate_promotion(insight) do
+    content_hash = Insight.hash_content(insight.content)
+
+    # Step 1: Exact dedup check
+    case Repo.get_by(Principle, content_hash: content_hash) do
+      %Principle{} = existing ->
+        %{outcome: :would_dedup_exact, existing_principle_id: existing.id, existing_principle: existing}
+
+      nil ->
+        # Step 2: Semantic dedup check, then preview
+        simulate_semantic_and_preview(insight, content_hash)
+    end
+  end
+
+  defp simulate_semantic_and_preview(insight, _content_hash) do
+    embedding_list = get_embedding_list(insight)
+
+    case find_semantic_duplicate_readonly(embedding_list) do
+      {:match, existing, _sim} ->
+        %{outcome: :would_dedup_semantic, existing_principle_id: existing.id, existing_principle: existing}
+
+      :no_match ->
+        build_promotion_preview(insight, embedding_list)
+    end
+  end
+
+  defp find_semantic_duplicate_readonly(nil), do: :no_match
+
+  defp find_semantic_duplicate_readonly(embedding_list) do
+    embedding_literal = Pgvector.new(embedding_list)
+
+    results =
+      from(p in Principle,
+        where: not is_nil(p.embedding),
+        where: p.status in [:active, :decaying],
+        select: {p, fragment("1 - (? <=> ?)", p.embedding, ^embedding_literal)},
+        order_by: fragment("? <=> ?", p.embedding, ^embedding_literal),
+        limit: 1
+      )
+      |> Repo.all()
+      |> Enum.filter(fn {_p, sim} -> sim >= 0.92 end)
+
+    case results do
+      [{principle, sim} | _] -> {:match, principle, sim}
+      [] -> :no_match
+    end
+  end
+
+  defp build_promotion_preview(insight, embedding_list) do
+    category = Map.get(@category_map, insight.category, :learning)
+    domains = if insight.domain, do: [insight.domain], else: []
+
+    rank =
+      Principle.compute_rank(%{
+        confidence: insight.confidence,
+        frequency: insight.observation_count,
+        recency_score: 1.0,
+        source_quality: 0.5
+      })
+
+    potential_links = find_potential_links(embedding_list)
+
+    %{
+      outcome: :would_promote,
+      principle_preview: %{
+        content: insight.content,
+        category: category,
+        domains: domains,
+        rank: rank,
+        confidence: insight.confidence,
+        frequency: insight.observation_count
+      },
+      potential_links: potential_links
+    }
+  end
+
+  defp find_potential_links(nil), do: []
+
+  defp find_potential_links(embedding_list) do
+    embedding_literal = Pgvector.new(embedding_list)
+
+    from(p in Principle,
+      where: not is_nil(p.embedding),
+      where: p.status in [:active, :decaying],
+      select: {p, fragment("1 - (? <=> ?)", p.embedding, ^embedding_literal)},
+      order_by: fragment("? <=> ?", p.embedding, ^embedding_literal),
+      limit: 20
+    )
+    |> Repo.all()
+    |> Enum.filter(fn {_p, sim} -> sim > 0.5 end)
+    |> Enum.map(fn {principle, sim} ->
+      %{
+        principle_id: principle.id,
+        content: String.slice(principle.content, 0, 200),
+        similarity: sim
+      }
+    end)
+  end
+
+  defp get_embedding_list(%Insight{embedding: nil}), do: nil
+  defp get_embedding_list(%Insight{embedding: embedding}) when is_list(embedding), do: embedding
+  defp get_embedding_list(%Insight{embedding: embedding}), do: Pgvector.to_list(embedding)
 
   # --- Private: eligibility builder ---
 
